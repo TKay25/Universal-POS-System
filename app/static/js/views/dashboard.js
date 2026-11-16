@@ -1,0 +1,264 @@
+/* Dashboard: KPI cards, trend, mixes and recent activity. */
+
+import { h, clear } from "../core/dom.js";
+import { icon } from "../core/icons.js";
+import { money, number, date, isoDay, addDays, rangeFromPreset } from "../core/fmt.js";
+import { get, post } from "../core/http.js";
+import { settings, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
+import {
+  pageHeader, statCard, sectionCard, button, table, statusBadge, badge, toast, loadingBlock,
+  emptyState, alertBox, moneyText, avatar,
+} from "../core/ui.js";
+import { areaChart, donutChart, barList, legend, heatStrip } from "../core/charts.js";
+import { openSaleDetail } from "./saleDetail.js";
+
+const PALETTE = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9", "#f97316"];
+
+export default async function dashboardView(ctx) {
+  const el = h("div");
+  el.appendChild(loadingBlock("Loading dashboard"));
+
+  let today;
+  let overview;
+  let onboarding = null;
+
+  async function load() {
+    const range = rangeFromPreset("30d", 29);
+    const [dashboardData, overviewData] = await Promise.all([
+      get("/reports/dashboard"),
+      get("/reports/overview", range),
+    ]);
+    today = dashboardData;
+    overview = overviewData;
+    if (hasPerm("settings.manage")) {
+      onboarding = await get("/company/onboarding").catch(() => null);
+    }
+    render();
+    const loading = el.querySelector(".loading-block");
+    if (loading) loading.remove();
+    clear(el);
+    render();
+  }
+
+  function greeting() {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 18) return "Good afternoon";
+    return "Good evening";
+  }
+
+  function render() {
+    clear(el);
+    const user = currentUser();
+    const widgets = new Set(settings()?.dashboard?.widgets || [
+      "sales_today", "transactions_today", "average_ticket", "low_stock",
+      "sales_chart", "payment_mix", "top_products", "recent_sales",
+    ]);
+
+    el.appendChild(pageHeader({
+      title: `${greeting()}, ${user.full_name.split(" ")[0]}`,
+      subtitle: `${companyName()} · ${date(new Date(), { year: true })}`,
+      actions: [
+        button("Reports", { icon: "chart", onClick: () => ctx.navigate("/reports") }),
+        hasPerm("pos.sell")
+          ? button("New sale", { variant: "primary", icon: "plus", onClick: () => ctx.navigate("/pos") })
+          : null,
+      ],
+    }));
+
+    if (onboarding && !onboarding.dismissed && onboarding.completed < onboarding.total) {
+      el.appendChild(renderOnboarding(onboarding));
+    }
+
+    for (const announcement of today.announcements || []) {
+      el.appendChild(h("div", { class: "banner-stack" }, alertBox(announcement.title, announcement.level === "critical" ? "danger" : announcement.level === "warning" ? "warning" : "info")));
+    }
+
+    const cards = today.cards || {};
+    const kpis = [];
+    if (widgets.has("sales_today")) {
+      kpis.push(statCard({
+        label: "Sales today", value: money(cards.sales_cents), icon: "cash",
+        foot: `${number(cards.transactions)} transactions`, tone: "",
+      }));
+    }
+    if (widgets.has("transactions_today")) {
+      kpis.push(statCard({
+        label: "Transactions", value: number(cards.transactions), icon: "receipt",
+        foot: `${number(cards.items_sold, 1)} items sold`, tone: "accent",
+      }));
+    }
+    if (widgets.has("average_ticket")) {
+      kpis.push(statCard({
+        label: "Average ticket", value: money(cards.average_ticket_cents), icon: "trend",
+        foot: `Gross profit ${money(cards.gross_profit_cents)}`, tone: "success",
+      }));
+    }
+    if (widgets.has("low_stock")) {
+      kpis.push(statCard({
+        label: "Low stock", value: number((today.low_stock || []).length), icon: "layers",
+        foot: (today.low_stock || []).length ? "Needs attention" : "Everything stocked",
+        tone: (today.low_stock || []).length ? "warning" : "success",
+        onClick: moduleOn("inventory") ? () => ctx.navigate("/inventory") : null,
+      }));
+    }
+    if (kpis.length) el.appendChild(h("div", { class: "grid grid--kpi mb-4" }, kpis));
+
+    const grid = h("div", { class: "grid grid--dash" });
+
+    if (widgets.has("sales_chart")) {
+      const series = overview.series || [];
+      grid.appendChild(h("div", { class: "span-8" }, sectionCard({
+        title: "Sales trend",
+        subtitle: "Last 30 days",
+        actions: badge("Gross " + money((overview.cards || {}).sales_cents), "primary"),
+        body: series.length
+          ? areaChart({
+            points: series.map((row) => row.sales_cents / 100),
+            labels: series.map((row) => date(row.date, { year: false })),
+            height: 260,
+            formatValue: (value) => money(Math.round(value * 100)),
+          })
+          : emptyState({ icon: "chart", title: "No sales yet", text: "Your trend appears as soon as you take the first sale." }),
+      })));
+    }
+
+    if (widgets.has("payment_mix")) {
+      const mixes = (overview.payment_mix || []).slice(0, 6);
+      grid.appendChild(h("div", { class: "span-4" }, sectionCard({
+        title: "Payment mix",
+        subtitle: "Last 30 days",
+        body: mixes.length
+          ? h("div", { class: "col items-center gap-3" },
+            donutChart({
+              segments: mixes.map((row, index) => ({ label: row.name, value: row.amount_cents, color: PALETTE[index % PALETTE.length] })),
+              size: 170,
+            }),
+            legend(mixes.map((row, index) => ({
+              label: row.name,
+              color: PALETTE[index % PALETTE.length],
+              value: money(row.amount_cents),
+            }))))
+          : emptyState({ icon: "card", title: "No payments yet" }),
+      })));
+    }
+
+    if (widgets.has("top_products")) {
+      grid.appendChild(h("div", { class: "span-4" }, sectionCard({
+        title: "Top products",
+        subtitle: "By quantity sold",
+        body: barList({
+          rows: (overview.top_products || []).map((row) => ({ label: row.name, value: row.qty })),
+          formatValue: (value) => `${number(value, 0)} sold`,
+        }),
+      })));
+    }
+
+    if (widgets.has("category_mix")) {
+      grid.appendChild(h("div", { class: "span-4" }, sectionCard({
+        title: "Category mix",
+        subtitle: "Revenue contribution",
+        body: barList({
+          rows: (overview.category_mix || []).map((row) => ({ label: row.name, value: row.revenue_cents, color: row.color })),
+        }),
+      })));
+    }
+
+    if (widgets.has("hourly_heat")) {
+      grid.appendChild(h("div", { class: "span-4" }, sectionCard({
+        title: "Busiest hours",
+        subtitle: "Transactions by hour",
+        body: h("div", { class: "col gap-3" },
+          heatStrip((overview.hourly || []).map((row) => row.transactions)),
+          h("div", { class: "flex justify-between tiny dim" }, h("span", {}, "00:00"), h("span", {}, "12:00"), h("span", {}, "23:00"))),
+      })));
+    }
+
+    if (widgets.has("recent_sales")) {
+      const recent = today.recent_sales || [];
+      grid.appendChild(h("div", { class: "span-8" }, sectionCard({
+        title: "Recent sales",
+        subtitle: "Latest tickets across the workspace",
+        flush: true,
+        actions: button("View all", { size: "sm", variant: "ghost", onClick: () => ctx.navigate("/sales") }),
+        body: recent.length
+          ? table({
+            compact: true,
+            rows: recent,
+            onRowClick: (row) => openSaleDetail(row.id, { onChanged: load }),
+            columns: [
+              { key: "number", label: "Receipt", render: (row) => h("div", {}, h("div", { class: "strong mono" }, row.number), h("div", { class: "tiny dim" }, row.cashier)) },
+              { key: "customer", label: "Customer", render: (row) => row.customer || "Walk-in" },
+              { key: "created_at", label: "When", render: (row) => h("span", { class: "dim" }, date(row.created_at)) },
+              { key: "status", label: "Status", render: (row) => statusBadge(row.status) },
+              { key: "total_cents", label: "Total", align: "right", render: (row) => h("span", { class: "strong num" }, money(row.total_cents)) },
+            ],
+          })
+          : emptyState({ icon: "receipt", title: "No sales yet", text: "Open the till and take your first sale." }),
+      })));
+    }
+
+    if ((today.low_stock || []).length) {
+      grid.appendChild(h("div", { class: "span-4" }, sectionCard({
+        title: "Needs restocking",
+        subtitle: "At or below threshold",
+        body: h("div", { class: "list", style: { margin: "-10px -16px" } },
+          today.low_stock.slice(0, 6).map((product) => h("div", { class: "list__row" },
+            h("div", { class: "module-card__icon", style: { fontSize: "16px" } }, product.emoji || "📦"),
+            h("div", { class: "grow", style: { minWidth: 0 } },
+              h("div", { class: "truncate strong small" }, product.name),
+              h("div", { class: "tiny dim" }, product.sku || "No SKU")),
+            badge(`${number(product.stock_qty, 0)} left`, product.stock_qty <= 0 ? "danger" : "warning"))),
+          moduleOn("inventory")
+            ? h("div", { style: { padding: "10px 16px" } }, button("Manage inventory", { size: "sm", variant: "soft", block: true, onClick: () => ctx.navigate("/inventory") }))
+            : null),
+      })));
+    }
+
+    el.appendChild(grid);
+  }
+
+  function renderOnboarding(data) {
+    const card = h("div", { class: "card mb-4", style: { padding: "18px" } });
+    card.appendChild(h("div", { class: "flex items-start gap-4 wrap" },
+      h("div", { class: "grow", style: { minWidth: "260px" } },
+        h("div", { class: "flex items-center gap-2" },
+          h("div", { class: "module-card__icon" }, icon("sparkles")),
+          h("div", { class: "settings-card__title" }, "Make this workspace yours"),
+          badge(`${data.percent}% ready`, data.percent >= 100 ? "success" : "primary")),
+        h("div", { class: "settings-card__sub" }, "A few steps and your POS is ready for customers."),
+        h("div", { class: "progress mt-3", style: { maxWidth: "420px" } },
+          h("div", { class: "progress__bar", style: { width: `${data.percent}%` } }))),
+      button("Dismiss", {
+        variant: "ghost",
+        size: "sm",
+        onClick: async () => {
+          try {
+            await post("/company/onboarding/dismiss");
+            card.remove();
+          } catch { /* ignore */ }
+        },
+      })));
+    const steps = h("div", { class: "onboarding mt-3" });
+    for (const step of data.steps) {
+      steps.appendChild(h("div", {
+        class: `onboarding__step${step.done ? " is-done" : ""}`,
+        onClick: () => ctx.navigate(step.route.replace("#", "")),
+      },
+      h("span", { class: "onboarding__check" }, icon("check")),
+      h("span", { class: "onboarding__label grow" }, step.label),
+      h("span", { class: "tiny dim" }, step.hint),
+      icon("chevronRight")));
+    }
+    card.appendChild(steps);
+    return card;
+  }
+
+  ctx.tab?.setTitle?.("Dashboard");
+  load().catch((error) => {
+    clear(el);
+    el.appendChild(alertBox(error.message, "danger"));
+  });
+
+  return { el, onActivate: () => load().catch(() => {}) };
+}
