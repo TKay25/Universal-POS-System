@@ -1,10 +1,10 @@
 /* Inventory: stock levels, movement ledger and suppliers. */
 
 import { h, clear } from "../core/dom.js";
-import { icon } from "../core/icons.js";
+import { icon, productIcon } from "../core/icons.js";
 import { money, number, qty as fmtQty, dateTime } from "../core/fmt.js";
-import { get, post, del } from "../core/http.js";
-import { hasPerm, moduleOn } from "../core/store.js";
+import { get, post, patch, del } from "../core/http.js";
+import { hasPerm, moduleOn, moduleConfig } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox,
   field, textInput, select, modal, statusBadge, emptyState, formGrid, statCard, segmented, confirmDialog,
@@ -65,7 +65,8 @@ export default async function inventoryView(ctx) {
           { key: "category", label: "Category", render: (row) => row.category || h("span", { class: "dim" }, "—") },
           { key: "stock_qty", label: "On hand", align: "right", render: (row) => row.track_stock ? h("span", { class: "strong num" }, fmtQty(row.stock_qty)) : h("span", { class: "dim" }, "untracked") },
           { key: "low_stock_threshold", label: "Low at", align: "right", render: (row) => row.track_stock ? fmtQty(row.low_stock_threshold) : "—" },
-          { key: "cost_cents", label: "Unit cost", align: "right", render: (row) => money(row.cost_cents) },
+          { key: "cost_cents", label: "Buying price", align: "right", render: (row) => money(row.cost_cents) },
+          { key: "price_cents", label: "Selling price", align: "right", render: (row) => money(row.price_cents) },
           {
             key: "value", label: "Stock value", align: "right",
             render: (row) => h("span", { class: "num" }, money(Math.round((row.stock_qty || 0) * (row.cost_cents || 0)))),
@@ -248,63 +249,235 @@ export default async function inventoryView(ctx) {
   }
 
   function openReceiveModal(product = null) {
+    let mode = product ? "existing" : "existing";
+    let departments = [];
+    let categories = [];
+    let products = [...state.products];
+    const dataListId = `inventory-product-suggestions-${Date.now()}`;
+    const suggestionList = h("datalist", { id: dataListId });
+
+    const modeHost = h("div", { class: "segmented" });
+    const existingHost = h("div", { class: "col gap-3" });
+    const newHost = h("div", { class: "col gap-3 hidden" });
+
+    const search = textInput({
+      placeholder: "Start typing a product name, SKU or barcode?",
+      value: product?.name || "",
+      attrs: { list: dataListId },
+    });
     const productSelect = select({
       value: product?.id || "",
-      options: state.products.map((row) => ({ value: row.id, label: `${row.name} (${fmtQty(row.stock_qty)} on hand)` })),
-      placeholder: "Choose a product",
+      options: products.map((row) => ({
+        value: row.id,
+        label: `${row.name}${row.sku ? ` ? ${row.sku}` : ""} (${fmtQty(row.stock_qty)} on hand)`,
+      })),
+      placeholder: products.length ? "Choose a product" : "No products yet ? create one below",
     });
     const quantity = textInput({ type: "number", step: "0.001", placeholder: "0" });
-    const supplier = select({
-      value: "",
-      options: [{ value: "", label: "No supplier" }, ...state.suppliers.map((row) => ({ value: row.id, label: row.name }))],
-    });
+    const buyingPrice = moneyInput({ placeholder: "Optional ? updates buying price" });
+    const sellingPrice = moneyInput({ placeholder: "Optional ? updates selling price" });
+    const supplier = select({ value: "", options: [{ value: "", label: "No supplier" }] });
     const reference = textInput({ placeholder: "Invoice / delivery note" });
     const note = textInput({ placeholder: "e.g. Weekly coffee delivery" });
-    const errorHost = h("div");
-    // Suppliers may not be loaded yet when opening from the levels tab.
-    get("/company/suppliers").then((data) => {
-      state.suppliers = data.items;
-      clear(supplier);
-      supplier.appendChild(h("option", { value: "" }, "No supplier"));
-      for (const row of data.items) supplier.appendChild(h("option", { value: row.id }, row.name));
-    }).catch(() => {});
 
-    const instance = modal({
-      title: "Receive stock",
-      subtitle: "Bring new stock into the catalog",
-      size: "sm",
-      body: h("div", { class: "col gap-3" }, errorHost,
-        field({ label: "Product", control: productSelect, required: true }),
-        formGrid([
-          field({ label: "Quantity", control: quantity, required: true }),
-          field({ label: "Supplier", control: supplier }),
-        ]),
-        field({ label: "Reference", control: reference }),
-        field({ label: "Note", control: note })),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button("Receive", { variant: "primary", icon: "plus", onClick: async () => {
-        if (!productSelect.value) {
-          clear(errorHost);
-          errorHost.appendChild(alertBox("Choose a product.", "danger"));
-          return;
-        }
-        try {
+    const newName = textInput({ placeholder: "Product name" });
+    const newSku = textInput({ placeholder: "SKU" });
+    const newBarcode = textInput({ placeholder: "Scan or type a barcode" });
+    const newDepartment = select({ value: "", options: [{ value: "", label: "No department" }] });
+    const newCategory = select({ value: "", options: [{ value: "", label: "No category" }] });
+    const newBuying = moneyInput({ placeholder: "0.00" });
+    const newSelling = moneyInput({ placeholder: "0.00" });
+    const newQty = textInput({ type: "number", step: "0.001", value: "0" });
+    const newThreshold = textInput({ type: "number", value: "5", min: "0" });
+    const newUnit = textInput({ value: "unit" });
+
+    const duplicateHint = h("div");
+    const errorHost = h("div");
+
+    function refreshSuggestions() {
+      clear(suggestionList);
+      for (const row of products) {
+        suggestionList.appendChild(h("option", { value: row.name }, row.sku || ""));
+      }
+    }
+    refreshSuggestions();
+
+    async function loadMeta() {
+      try {
+        const [categoryData, supplierData] = await Promise.all([
+          get("/categories"),
+          get("/company/suppliers").catch(() => ({ items: [] })),
+        ]);
+        departments = categoryData.departments || [];
+        categories = categoryData.items || [];
+        clear(newDepartment);
+        newDepartment.appendChild(h("option", { value: "" }, "No department"));
+        for (const row of departments) newDepartment.appendChild(h("option", { value: row.id }, row.name));
+        paintCategories();
+        clear(supplier);
+        supplier.appendChild(h("option", { value: "" }, "No supplier"));
+        for (const row of supplierData.items || []) supplier.appendChild(h("option", { value: row.id }, row.name));
+      } catch { /* non-fatal */ }
+    }
+
+    function paintCategories() {
+      const keep = newCategory.value;
+      clear(newCategory);
+      newCategory.appendChild(h("option", { value: "" }, "No category"));
+      const filtered = newDepartment.value
+        ? categories.filter((row) => String(row.department_id) === String(newDepartment.value))
+        : categories;
+      for (const row of filtered) {
+        newCategory.appendChild(h("option", { value: row.id, selected: String(row.id) === String(keep) }, row.name));
+      }
+    }
+    newDepartment.addEventListener("change", paintCategories);
+
+    function checkDuplicate() {
+      clear(duplicateHint);
+      const term = search.value.trim().toLowerCase();
+      if (!term) return;
+      const match = products.find((row) => row.name.toLowerCase() === term
+        || (row.sku || "").toLowerCase() === term
+        || (row.barcode || "") === term);
+      if (!match) return;
+      duplicateHint.appendChild(alertBox(
+        h("div", { class: "col gap-1" },
+          h("div", {}, h("strong", {}, `${match.name} is already in your catalog.`),
+            ` ${fmtQty(match.stock_qty)} on hand${match.sku ? ` ? ${match.sku}` : ""}. Add stock to it instead of creating a duplicate.`),
+          button("Add stock to this product", {
+            size: "sm",
+            variant: "soft",
+            icon: "plus",
+            onClick: () => {
+              mode = "existing";
+              renderMode();
+              productSelect.value = String(match.id);
+              search.value = match.name;
+              tooltipScroll();
+            },
+          })), "warning"));
+    }
+    function tooltipScroll() { /* keeps focus after mode switch */ }
+
+    search.addEventListener("input", checkDuplicate);
+    search.addEventListener("change", () => {
+      const term = search.value.trim().toLowerCase();
+      const match = products.find((row) => row.name.toLowerCase() === term
+        || (row.sku || "").toLowerCase() === term
+        || (row.barcode || "") === term);
+      if (match) productSelect.value = String(match.id);
+    });
+
+    function renderMode() {
+      clear(modeHost);
+      for (const [value, label, iconName] of [
+        ["existing", "Add to existing product", "plus"],
+        ["new", "New product", "box"],
+      ]) {
+        modeHost.appendChild(h("button", {
+          class: `segmented__item${mode === value ? " is-active" : ""}`,
+          type: "button",
+          onClick: () => {
+            mode = value;
+            renderMode();
+          },
+        }, icon(iconName), label));
+      }
+      existingHost.classList.toggle("hidden", mode !== "existing");
+      newHost.classList.toggle("hidden", mode !== "new");
+    }
+
+    existingHost.appendChild(field({ label: "Find product", control: search }));
+    existingHost.appendChild(field({ label: "Product", control: productSelect, required: true }));
+    existingHost.appendChild(formGrid([
+      field({ label: "Quantity received", control: quantity, required: true }),
+      field({ label: "Supplier", control: supplier }),
+      field({ label: "Buying price (optional update)", control: buyingPrice }),
+      field({ label: "Selling price (optional update)", control: sellingPrice }),
+    ]));
+    existingHost.appendChild(formGrid([
+      field({ label: "Reference", control: reference }),
+      field({ label: "Note", control: note }),
+    ]));
+
+    newHost.appendChild(field({ label: "Product name", control: newName, required: true, hint: "Start typing ? if it exists, we will offer to add stock instead." }));
+    newHost.appendChild(formGrid([
+      field({ label: "SKU", control: newSku }),
+      field({ label: "Barcode", control: newBarcode }),
+      field({ label: "Buying price", control: newBuying, required: true }),
+      field({ label: "Selling price", control: newSelling, required: true }),
+      field({ label: "Opening quantity", control: newQty }),
+      field({ label: "Low stock at", control: newThreshold }),
+      field({ label: "Department", control: newDepartment }),
+      field({ label: "Category", control: newCategory }),
+      field({ label: "Unit", control: newUnit }),
+    ]));
+
+    async function submit() {
+      clear(errorHost);
+      try {
+        if (mode === "existing") {
+          if (!productSelect.value) {
+            errorHost.appendChild(alertBox("Choose a product or create a new one.", "danger"));
+            return;
+          }
+          const qty = Number(quantity.value) || 0;
+          if (qty <= 0) {
+            errorHost.appendChild(alertBox("Enter the quantity received.", "danger"));
+            return;
+          }
           await post(`/products/${productSelect.value}/stock`, {
             mode: "delta",
-            qty: Number(quantity.value) || 0,
+            qty,
             reason: "receive",
             supplier_id: supplier.value ? Number(supplier.value) : null,
             reference: reference.value.trim(),
             note: note.value.trim() || "Stock received",
+            buying_price: buyingPrice.value !== "" ? buyingPrice.value : undefined,
+            selling_price: sellingPrice.value !== "" ? sellingPrice.value : undefined,
           });
           toast("Stock received.", "success");
-          instance.close();
-          loadProducts();
-          if (state.tab === "movements") loadMovements();
-        } catch (error) {
-          clear(errorHost);
-          errorHost.appendChild(alertBox(error.message, "danger"));
+        } else {
+          if (!newName.value.trim() || newSelling.value === "") {
+            errorHost.appendChild(alertBox("A new product needs a name and a selling price.", "danger"));
+            return;
+          }
+          const { item } = await post("/products", {
+            name: newName.value.trim(),
+            sku: newSku.value.trim(),
+            barcode: newBarcode.value.trim(),
+            price: newSelling.value,
+            cost: newBuying.value || "0",
+            stock_qty: Number(newQty.value) || 0,
+            low_stock_threshold: Number(newThreshold.value) || 0,
+            department_id: newDepartment.value ? Number(newDepartment.value) : null,
+            category_id: newCategory.value ? Number(newCategory.value) : null,
+            unit: newUnit.value.trim() || "unit",
+            icon: "box",
+          });
+          if (reference.value.trim()) {
+            await patch(`/products/${item.id}`, {}).catch(() => {});
+          }
+          toast(`${item.name} added to the catalog.`, "success");
         }
-      } })],
+        instance.close();
+        await loadProducts();
+        if (state.tab === "movements") loadMovements();
+      } catch (error) {
+        errorHost.appendChild(alertBox(error.message, "danger"));
+      }
+    }
+
+    renderMode();
+    loadMeta();
+
+    const instance = modal({
+      title: "Receive stock",
+      subtitle: "Bring new stock in, or add to something you already sell",
+      size: "md",
+      body: h("div", { class: "col gap-3" }, errorHost, modeHost, duplicateHint, existingHost, newHost, suggestionList),
+      footer: [button("Cancel", { onClick: () => instance.close() }), button("Receive stock", { variant: "primary", icon: "plus", onClick: submit })],
     });
   }
 

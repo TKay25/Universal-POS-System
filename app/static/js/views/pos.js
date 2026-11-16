@@ -1,7 +1,7 @@
 /* Point of sale: catalog browser, cart, payments, holds and drawer. */
 
 import { h, clear, debounce } from "../core/dom.js";
-import { icon } from "../core/icons.js";
+import { icon, productIcon } from "../core/icons.js";
 import { money, number, qty as fmtQty, date, isoDay, addDays } from "../core/fmt.js";
 import { get, post, del } from "../core/http.js";
 import {
@@ -400,7 +400,9 @@ export default async function posView(ctx) {
         style: { "--tile-color": product.category_color || product.color || "var(--primary)" },
         onClick: () => addProduct(product),
       });
-      if (cfg.show_images !== false && product.emoji) tile.appendChild(h("div", { class: "pos-tile__emoji" }, product.emoji));
+      if (cfg.show_images !== false) {
+        tile.appendChild(h("div", { class: "pos-tile__icon" }, productIcon(product.icon || "box")));
+      }
       if (product.is_featured) tile.appendChild(h("span", { class: "pos-tile__badge" }, "★"));
       tile.appendChild(h("div", { class: "pos-tile__name" }, product.name));
       const foot = h("div", { class: "pos-tile__foot" },

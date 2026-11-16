@@ -1,7 +1,7 @@
 /* Product catalog: list, editor, categories, stock and labels. */
 
 import { h, clear, debounce } from "../core/dom.js";
-import { icon } from "../core/icons.js";
+import { icon, productIcon, PRODUCT_ICON_NAMES } from "../core/icons.js";
 import { money, number, percent, qty as fmtQty } from "../core/fmt.js";
 import { get, post, patch, del, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig, currency } from "../core/store.js";
@@ -117,8 +117,8 @@ export default async function productsView(ctx) {
                 h("span", { class: "chip__dot", style: { background: row.category_color } }), row.category)
               : h("span", { class: "dim" }, "—"),
           },
-          { key: "price_cents", label: "Price", align: "right", render: (row) => h("span", { class: "strong num" }, money(row.price_cents)) },
-          { key: "cost_cents", label: "Cost", align: "right", render: (row) => h("span", { class: "num dim" }, money(row.cost_cents)) },
+          { key: "price_cents", label: "Selling price", align: "right", render: (row) => h("span", { class: "strong num" }, money(row.price_cents)) },
+          { key: "cost_cents", label: "Buying price", align: "right", render: (row) => h("span", { class: "num dim" }, money(row.cost_cents)) },
           { key: "margin_percent", label: "Margin", align: "right", render: (row) => badge(`${percent(row.margin_percent, 0)}`, row.margin_percent >= 40 ? "success" : row.margin_percent >= 20 ? "warning" : "danger") },
           {
             key: "stock_qty", label: "Stock", align: "right",
@@ -235,8 +235,8 @@ export default async function productsView(ctx) {
     const unit = textInput({ value: product?.unit || "unit", placeholder: "unit / kg / hour" });
     const stock = textInput({ type: "number", value: product ? String(product.stock_qty) : "0", step: "0.001" });
     const threshold = textInput({ type: "number", value: String(product?.low_stock_threshold ?? 5), min: "0" });
-    const emojiHost = h("div", { class: "thumbs" });
-    let emoji = product?.emoji || "";
+    const iconHost = h("div", { class: "thumbs" });
+    let chosenIcon = product?.icon || "box";
     const colorHost = h("div", { class: "thumbs" });
     let color = product?.color || COLORS[0];
     const trackStock = switchControl({ checked: product ? product.track_stock : true, label: "Track stock for this product" });
@@ -244,13 +244,13 @@ export default async function productsView(ctx) {
     const active = switchControl({ checked: product ? product.is_active : true, label: "Active (sellable)" });
     const errorHost = h("div");
 
-    for (const choice of EMOJI_CHOICES) {
-      const btn = h("button", { class: `thumb${emoji === choice ? " is-active" : ""}`, type: "button", onClick: () => {
-        emoji = choice;
-        [...emojiHost.children].forEach((node) => node.classList.remove("is-active"));
+    for (const choice of PRODUCT_ICON_NAMES) {
+      const btn = h("button", { class: `thumb${chosenIcon === choice ? " is-active" : ""}`, type: "button", title: choice, onClick: () => {
+        chosenIcon = choice;
+        [...iconHost.children].forEach((node) => node.classList.remove("is-active"));
         btn.classList.add("is-active");
-      } }, choice);
-      emojiHost.appendChild(btn);
+      } }, productIcon(choice));
+      iconHost.appendChild(btn);
     }
     for (const choice of COLORS) {
       const btn = h("button", {
@@ -312,14 +312,14 @@ export default async function productsView(ctx) {
         field({ label: "Barcode", control: barcode, hint: moduleOn("barcode") ? "Used when scanning at the till." : "" }),
         field({ label: "Department", control: department }),
         field({ label: "Category", control: category }),
-        field({ label: "Price", control: price, required: true, hint: `In ${currency().code}` }),
-        field({ label: "Cost", control: cost, hint: "Used for margin and profit reports." }),
+        field({ label: "Selling price", control: price, required: true, hint: `What customers pay, in ${currency().code}` }),
+        field({ label: "Buying price", control: cost, hint: "What you pay your supplier ? used for profit." }),
         field({ label: "Tax rate", control: tax }),
         field({ label: "Unit", control: unit }),
       ]),
       field({ label: "Description", control: description }),
       h("div", { class: "form-grid" },
-        field({ label: "Emoji / image", control: emojiHost }),
+        field({ label: "Product icon", control: iconHost }),
         field({ label: "Tile colour", control: colorHost })),
       stockFields,
       h("div", { class: "col gap-2" }, trackStock, featured, active),
@@ -357,7 +357,7 @@ export default async function productsView(ctx) {
         stock_qty: Number(stock.value) || 0,
         low_stock_threshold: Number(threshold.value) || 0,
         color,
-        emoji,
+        icon: chosenIcon,
         is_active: active.input.checked,
         is_featured: featured.input.checked,
         custom_fields: customValues,

@@ -84,7 +84,7 @@
 
 /* ---------- reset --------------------------------------------------------- */
 *, *::before, *::after { box-sizing: border-box; }
-html, body { height: 100%; }
+html, body { height: 100%; overflow: hidden; }
 body {
   margin: 0;
   font-family: var(--font);
@@ -406,16 +406,28 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: 20px 22px 32px;
+  overscroll-behavior: contain;
+  padding: 0 22px 26px;
   display: none;
   animation: viewin 200ms ease;
 }
+.view[data-tab="pos"] { padding: 0; overflow: hidden; }
+.view > *:last-child { margin-bottom: 8px; }
 .view.is-active { display: block; }
 @keyframes viewin { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .view--flush { padding: 0; }
 
 /* ---------- page header --------------------------------------------------- */
-.page-head { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+.page-head {
+  display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 9;
+  margin: 0 -22px 16px;
+  padding: 18px 22px 12px;
+  background: linear-gradient(180deg, var(--bg) 72%, transparent);
+  backdrop-filter: blur(10px);
+}
 .page-head__title { font-size: 21px; font-weight: 680; letter-spacing: -.028em; }
 .page-head__sub { color: var(--text-2); font-size: 13px; margin-top: 3px; }
 .page-head__actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -673,6 +685,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* ---------- table --------------------------------------------------------- */
 .table-wrap { overflow: auto; }
+.view .table-wrap { max-height: calc(100vh - 330px); min-height: 140px; }
 .table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.9px; }
 .table th {
   text-align: left;
@@ -1407,7 +1420,11 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 @media (max-width: 640px) {
   :root { --topbar-h: 56px; }
-  .view { padding: 14px; }
+  .view { padding: 0 12px 18px; }
+  .page-head { margin: 0 -12px 12px; padding: 14px 12px 10px; }
+  .view .table-wrap { max-height: calc(100vh - 290px); }
+  .grid--kpi { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+  .kpi__value { font-size: 20px; }
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .searchbox { min-width: 0; }
@@ -1420,4 +1437,44 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   .sidebar, .topbar, .tabbar, .page-head__actions, .toasts { display: none !important; }
   .app { display: block; }
   .view { position: static; overflow: visible; padding: 0; }
+}
+
+/* ---------- product icons (Bootstrap style) ------------------------------- */
+.product-icon { width: 20px; height: 20px; color: inherit; flex: none; }
+.thumb .product-icon { width: 18px; height: 18px; }
+.pos-tile__icon {
+  width: 30px; height: 30px;
+  color: color-mix(in srgb, var(--tile-color, var(--primary)) 82%, var(--text));
+}
+.pos-tile__icon svg { width: 100%; height: 100%; }
+.module-card__icon .product-icon { width: 17px; height: 17px; }
+
+/* ---------- mobile drawer navigation -------------------------------------- */
+.sidebar.is-open {
+  display: flex;
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 258px;
+  z-index: 60;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: drawerin 180ms ease;
+}
+.sidebar.is-open .brand__text,
+.sidebar.is-open .nav__item span,
+.sidebar.is-open .nav__label,
+.sidebar.is-open .user-meta { display: block; }
+.sidebar.is-open .nav__item { justify-content: flex-start; padding: 9px 10px; }
+.sidebar.is-open .sidebar__user { justify-content: flex-start; }
+.sidebar-backdrop {
+  position: fixed; inset: 0; z-index: 55;
+  background: rgba(8, 11, 20, .45);
+  backdrop-filter: blur(2px);
+}
+@media (max-width: 640px) {
+  .table th, .table td { padding-left: 9px; padding-right: 9px; }
+  .kpi { padding: 12px; }
+  .modal { border-radius: 16px; }
+  .modal__body { max-height: 60vh; }
+  .pos__right { max-height: 48vh; }
 }
