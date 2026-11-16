@@ -32,7 +32,7 @@ def test_developer_overview_and_company_lifecycle(client, developer, developer_h
     with app.app_context():
         assert db.session.get(Company, company_id).slug == "provisioned-ltd"
         owner = User.query.filter_by(email="owner@provisioned.test").first()
-        assert owner is not None and owner.role.name == "Owner"
+        assert owner is not None and owner.role.name == "Administrator"
 
     # The provisioned owner can sign in and sell.
     owner_headers = login(client, "owner@provisioned.test", "Password!1")
@@ -64,7 +64,8 @@ def test_developer_overview_and_company_lifecycle(client, developer, developer_h
         assert User.query.filter_by(email="owner@provisioned.test").first() is None
 
 
-def test_developer_can_reset_a_user_password(client, developer_headers, owner):
+def test_developer_can_reset_a_user_password(client, developer, owner):
+    developer_headers = login(client, developer["email"], developer["password"])
     users = client.get("/api/developer/users", headers=developer_headers).get_json()["items"]
     target = next(user for user in users if user["email"] == owner["company"]["email"])
 
@@ -77,7 +78,8 @@ def test_developer_can_reset_a_user_password(client, developer_headers, owner):
     login(client, owner["company"]["email"], "BrandNew!123")
 
 
-def test_developer_enters_a_workspace(client, developer_headers, owner):
+def test_developer_enters_a_workspace(client, developer, owner):
+    developer_headers = login(client, developer["email"], developer["password"])
     response = client.post(f"/api/auth/enter-company/{owner['company']['id']}", headers=developer_headers)
     assert response.status_code == 200
     session = response.get_json()

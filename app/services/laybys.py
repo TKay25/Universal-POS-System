@@ -188,7 +188,13 @@ def add_payment(company, user, layby: Layby, payload: dict) -> Layby:
     if layby.status != "active":
         raise bad_request("Only active lay-bys can take payments.")
 
-    amount = to_cents(payload.get("amount")) if payload.get("amount") is not None else int(payload.get("amount_cents") or 0)
+    raw_amount = payload.get("amount")
+    if isinstance(raw_amount, str):
+        amount = to_cents(raw_amount)
+    elif raw_amount is not None:
+        amount = int(raw_amount)
+    else:
+        amount = int(payload.get("amount_cents") or 0)
     if amount <= 0:
         raise bad_request("Enter a payment amount.", {"amount": "Amount is required."})
     if amount > layby.balance_cents:

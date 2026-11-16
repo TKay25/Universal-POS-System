@@ -15,7 +15,7 @@ from app.models import (
     Category,
     Customer,
     Layby,
-    Customer,
+    Location,
     Product,
     Refund,
     Sale,
@@ -45,9 +45,10 @@ def _scalar(stmt, default=0):
     return default if value is None else value
 
 
-def overview(company, start: datetime, end: datetime) -> dict:
+def overview(company, start: datetime, end: datetime, location_id: int | None = None) -> dict:
     company_id = company.id
     statuses = REVENUE_STATUSES
+    branch_clause = [Sale.location_id == location_id] if location_id else []
 
     totals = db.session.execute(
         select(
@@ -62,6 +63,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
     ).one()
     sales_cents, transactions, tax_cents, discount_cents, refunded_cents, cost_cents = totals
@@ -74,6 +76,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
     )
 
@@ -88,6 +91,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
         .group_by("day")
         .order_by("day")
@@ -114,6 +118,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
         .group_by(SalePayment.method_name)
         .order_by(func.sum(SalePayment.amount_cents).desc())
@@ -134,6 +139,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
         .group_by(SaleItem.name)
         .order_by(func.sum(SaleItem.qty).desc())
@@ -158,6 +164,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
         .group_by(Category.name, Category.color)
         .order_by(func.sum(SaleItem.line_total_cents).desc())
@@ -179,6 +186,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(statuses),
+            *branch_clause,
         )
         .group_by(local_hour_sql(Sale.created_at, company))
     ).all()
@@ -191,7 +199,7 @@ def overview(company, start: datetime, end: datetime) -> dict:
     recent = (
         db.session.execute(
             select(Sale)
-            .where(Sale.company_id == company_id)
+            .where(Sale.company_id == company_id, *branch_clause)
             .order_by(Sale.created_at.desc())
             .limit(8)
         )
@@ -219,8 +227,30 @@ def overview(company, start: datetime, end: datetime) -> dict:
     average = int(sales_cents) / transactions if transactions else 0
     ticket_average = int(sales_cents) / transactions if transactions else 0
 
+    branch_rows = db.session.execute(
+        select(
+            func.coalesce(Location.name, "Unassigned"),
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+        )
+        .select_from(Sale)
+        .outerjoin(Location, Location.id == Sale.location_id)
+        .where(
+            Sale.company_id == company_id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            Sale.status.in_(statuses),
+            *branch_clause,
+        )
+        .group_by(Location.name)
+        .order_by(func.sum(Sale.total_cents).desc())
+    ).all()
+
     return {
         "range": {"from": iso(start), "to": iso(end)},
+        "branches": [
+            {"name": row[0], "transactions": int(row[1]), "sales_cents": int(row[2])} for row in branch_rows
+        ],
         "cards": {
             "sales_cents": int(sales_cents),
             "transactions": int(transactions),
@@ -506,6 +536,29 @@ def report_laybys(company, start, end):
     return rows
 
 
+def report_branches(company, start, end):
+    rows = _rows(
+        select(
+            func.coalesce(Location.name, "Unassigned"),
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.coalesce(func.sum(Sale.refunded_cents), 0),
+            func.coalesce(func.sum(Sale.discount_cents), 0),
+        )
+        .select_from(Sale)
+        .outerjoin(Location, Location.id == Sale.location_id)
+        .where(
+            Sale.company_id == company.id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            Sale.status.in_(REVENUE_STATUSES),
+        )
+        .group_by(Location.name)
+        .order_by(func.sum(Sale.total_cents).desc())
+    )
+    return rows
+
+
 def report_suppliers(company, start, end):
     rows = _rows(
         select(Supplier.name, Supplier.contact_name, Supplier.phone, Supplier.email)
@@ -667,6 +720,18 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "created_at", "label": "Opened", "type": "text"},
         ],
         "build": report_laybys,
+    },
+    "branches": {
+        "name": "Branches",
+        "description": "Sales performance for every shop branch.",
+        "columns": [
+            {"key": "branch", "label": "Branch", "type": "text"},
+            {"key": "transactions", "label": "Transactions", "type": "number"},
+            {"key": "sales", "label": "Sales", "type": "money"},
+            {"key": "refunds", "label": "Refunds", "type": "money"},
+            {"key": "discounts", "label": "Discounts", "type": "money"},
+        ],
+        "build": report_branches,
     },
     "suppliers": {
         "name": "Suppliers",

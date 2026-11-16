@@ -19,6 +19,10 @@ const CURRENCIES = [
   { value: "AED|AED", label: "UAE Dirham (AED)" },
 ];
 
+function formGrid2(children) {
+  return h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px" } }, children);
+}
+
 export default function loginView({ onAuthed, initialError = "" } = {}) {
   let mode = "signin";
 
@@ -113,6 +117,8 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
     const email = textInput({ placeholder: "you@company.com", attrs: { autocomplete: "email" } });
     const password = textInput({ type: "password", placeholder: "At least 8 characters", attrs: { autocomplete: "new-password" } });
     const currency = select({ value: "USD|$", options: CURRENCIES });
+    const vat = textInput({ placeholder: "VAT number (optional)", attrs: { maxlength: "60" } });
+    const companyReg = textInput({ placeholder: "Company registration number (optional)", attrs: { maxlength: "60" } });
 
     const submit = button("Create my workspace", { variant: "primary", size: "lg", block: true, type: "submit" });
 
@@ -131,6 +137,8 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
             password: password.value,
             currency_code: code,
             currency_symbol: symbol,
+            vat_number: vat.value.trim(),
+            company_reg_number: companyReg.value.trim(),
           });
           store.set({ session, csrf: session.csrf_token });
           applyBranding();
@@ -148,8 +156,13 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
     field({ label: "Work email", control: email }),
     field({ label: "Password", control: password, hint: "Minimum 8 characters." }),
     field({ label: "Currency", control: currency, hint: "You can change this later in settings." }),
+    formGrid2([
+      field({ label: "VAT registration number", control: vat, hint: "For Zimbabwe, your ZIMRA VAT number" }),
+      field({ label: "Company registration number", control: companyReg, hint: "Registrar of Companies number" }),
+    ]),
     submit,
-    h("p", { class: "tiny dim center" }, "You will start on a 14-day trial with every module available."));
+    h("p", { class: "tiny dim center" },
+      "You become the workspace Administrator with full access. You will start on a 14-day trial with every module available."));
 
     return form;
   }

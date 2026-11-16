@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 
 from flask import Blueprint, jsonify, request
 
@@ -627,7 +628,8 @@ def _normalise_row(row: dict) -> dict:
     for key, value in (row or {}).items():
         if key is None:
             continue
-        normalised = "".join(ch if ch.isalnum() else "_" for ch in str(key).strip().lower()).strip("_")
+        spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", str(key).strip())
+        normalised = "".join(ch if ch.isalnum() else "_" for ch in spaced.lower()).strip("_")
         clean[normalised] = ("" if value is None else str(value).strip())
     return clean
 

@@ -85,7 +85,7 @@ def provision_company(
         )
 
     db.session.flush()
-    company.owner_role = roles.get("Owner")  # transient helper for callers
+    company.owner_role = roles.get("Administrator") or roles.get("Owner")  # transient helper for callers
     return company
 
 

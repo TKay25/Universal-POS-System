@@ -7,7 +7,7 @@ import { get, downloadFile } from "../core/http.js";
 import { hasPerm, moduleConfig } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, table, badge, alertBox, statCard, emptyState, toast, segmented,
-  field, textInput,
+  field, textInput, select,
 } from "../core/ui.js";
 import { areaChart, donutChart, barList, legend, heatStrip } from "../core/charts.js";
 
@@ -16,13 +16,15 @@ const PALETTE = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6
 export default async function reportsView(ctx) {
   const el = h("div");
   const defaultDays = Number(moduleConfig("reports").default_range_days || 30);
-  const state = { key: "summary", from: isoDay(addDays(-(defaultDays - 1))), to: isoDay() };
+  const state = { key: "summary", from: isoDay(addDays(-(defaultDays - 1))), to: isoDay(), locationId: "" };
   let registry = [];
+  let locations = [];
 
   const content = h("div");
   const tabsHost = h("div", { class: "chips mb-4" });
   const fromInput = h("input", { class: "input input--sm", type: "date", value: state.from, style: { width: "150px" } });
   const toInput = h("input", { class: "input input--sm", type: "date", value: state.to, style: { width: "150px" } });
+  const branchHost = h("div", { class: "flex gap-2 items-center" });
 
   function applyRange() {
     state.from = fromInput.value || state.from;
@@ -54,6 +56,7 @@ export default async function reportsView(ctx) {
   el.appendChild(h("div", { class: "flex gap-2 items-center wrap mb-4" },
     presets,
     h("div", { class: "flex gap-2 items-center", style: { marginLeft: "auto" } },
+      branchHost,
       h("span", { class: "tiny dim" }, "From"), fromInput,
       h("span", { class: "tiny dim" }, "To"), toInput)));
   el.appendChild(tabsHost);
@@ -81,6 +84,10 @@ export default async function reportsView(ctx) {
         registry = catalog.reports;
         renderTabs();
       }
+      if (!locations.length) {
+        locations = (await get("/company/locations")).items || [];
+        renderBranchFilter();
+      }
       if (state.key === "summary") await renderSummary();
       else await renderTable(state.key);
     } catch (error) {
@@ -89,8 +96,25 @@ export default async function reportsView(ctx) {
     }
   }
 
+  function renderBranchFilter() {
+    clear(branchHost);
+    if (locations.length < 2) return;
+    const picker = select({
+      value: state.locationId,
+      options: [{ value: "", label: "All branches" }, ...locations.map((row) => ({ value: row.id, label: row.name }))],
+      onChange: (event) => {
+        state.locationId = event.target.value;
+        if (state.key === "summary") load();
+      },
+    });
+    branchHost.appendChild(h("span", { class: "tiny dim" }, "Branch"));
+    branchHost.appendChild(picker);
+  }
+
   async function renderSummary() {
-    const data = await get("/reports/overview", { from: state.from, to: state.to });
+    const params = { from: state.from, to: state.to };
+    if (state.locationId) params.location_id = state.locationId;
+    const data = await get("/reports/overview", params);
     clear(content);
     const cards = data.cards || {};
     content.appendChild(h("div", { class: "grid grid--kpi mb-4" },

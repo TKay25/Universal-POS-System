@@ -5,7 +5,7 @@ import { icon, productIcon } from "../core/icons.js";
 import { money, number, qty as fmtQty, date, isoDay, addDays } from "../core/fmt.js";
 import { get, post, del } from "../core/http.js";
 import {
-  store, hasPerm, moduleOn, moduleConfig, settings, currentUser, currency,
+  store, hasPerm, moduleOn, moduleConfig, settings, currentUser, currency, currentCompany,
 } from "../core/store.js";
 import {
   button, iconButton, modal, drawer, field, textInput, textarea, select, switchControl,
@@ -39,6 +39,9 @@ export default async function posView(ctx) {
     departmentId: null,
     shift: null,
     holds: [],
+    locations: [],
+    registers: [],
+    locationId: null,
     lastSale: null,
     taxRates: [],
   };
@@ -64,8 +67,14 @@ export default async function posView(ctx) {
       settings: data.settings,
       shift: data.shift,
       holds: data.held_carts,
+      locations: (data.locations || []).filter((row) => row.is_active),
+      registers: data.registers || [],
       taxRates: data.taxes,
     });
+    const savedBranch = Number(localStorage.getItem(`pos-branch:${currentCompany()?.slug || "default"}`)) || null;
+    state.locationId = state.locations.some((row) => row.id === savedBranch)
+      ? savedBranch
+      : (state.locations.find((row) => row.is_default)?.id || state.locations[0]?.id || null);
     const loadingBlock = el.querySelector(".loading-block");
     if (loadingBlock) loadingBlock.remove();
     renderAll();
@@ -294,6 +303,14 @@ export default async function posView(ctx) {
 
     left.appendChild(h("div", { class: "pos__toolbar" },
       h("div", { class: "pos__search" }, icon("search"), searchInput),
+      state.locations.length > 1
+        ? h("button", {
+          class: "btn btn--sm",
+          type: "button",
+          title: "Switch branch",
+          onClick: (e) => openBranchMenu(e.currentTarget),
+        }, icon("map"), h("span", {}, state.locations.find((row) => row.id === state.locationId)?.name || "Branch"))
+        : null,
       h("div", { class: "flex gap-2" },
         state.holds.length
           ? button(`Held (${state.holds.length})`, { size: "sm", icon: "pause", onClick: openHolds })
@@ -1025,6 +1042,8 @@ export default async function posView(ctx) {
           redeem_points: state.redeem,
           note: state.note,
           shift_id: state.shift?.id || null,
+          location_id: state.locationId,
+          register_id: state.registers.find((row) => row.location_id === state.locationId)?.id || null,
         });
         paymentModal.close();
         clearCart();
@@ -1075,12 +1094,25 @@ export default async function posView(ctx) {
     if ((state.config.pos || {}).auto_print) printReceipt(sale.id);
   }
 
+  function openBranchMenu(anchor) {
+    menu(anchor, state.locations.map((branch) => ({
+      label: `${branch.name}${branch.is_default ? " (default)" : ""}`,
+      icon: "map",
+      onClick: () => {
+        state.locationId = branch.id;
+        localStorage.setItem(`pos-branch:${currentCompany()?.slug || "default"}`, String(branch.id));
+        toast(`Selling from ${branch.name}.`, "info");
+        renderLeft();
+      },
+    })));
+  }
+
   /* --------------------------------------------------------------------- */
   /* Lay-by                                                                 */
   /* --------------------------------------------------------------------- */
   function openLaybyModal() {
     if (!state.customer) {
-      toast("Lay-bys need a registered customer ? attach one first.", "warning");
+      toast("Lay-bys need a registered customer - attach one first.", "warning");
       openCustomerPicker();
       return;
     }
@@ -1119,7 +1151,7 @@ export default async function posView(ctx) {
         });
         laybyModal.close();
         clearCart();
-        toast(`Lay-by ${item.number} created ? ${money(item.balance_cents)} still due.`, "success");
+        toast(`Lay-by ${item.number} created · ${money(item.balance_cents)} still due.`, "success");
         const print = await confirmDialog({
           title: "Print the lay-by statement?",
           message: `Deposit ${money(item.deposit_cents)} received from ${item.customer}. Balance ${money(item.balance_cents)} due by ${date(item.due_date)}.`,
@@ -1136,7 +1168,7 @@ export default async function posView(ctx) {
     });
     const laybyModal = modal({
       title: "Start a lay-by",
-      subtitle: `${state.customer.name} ? ${money(totals.total)} of goods`,
+      subtitle: `${state.customer.name} · ${money(totals.total)} of goods`,
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
         h("div", { class: "change-due" }, h("span", {}, "Goods reserved"), h("span", { class: "num" }, money(totals.total))),
@@ -1164,7 +1196,11 @@ export default async function posView(ctx) {
       footer: [button("Cancel", { onClick: () => instance.close() }),
         button("Open drawer", { variant: "primary", onClick: async () => {
           try {
-            await post("/shifts/open", { opening_float: Number(floatInput.value) || 0, notes: notes.value });
+            await post("/shifts/open", {
+              opening_float: Number(floatInput.value) || 0,
+              notes: notes.value,
+              register_id: state.registers.find((row) => row.location_id === state.locationId)?.id || null,
+            });
             instance.close();
             const data = await get("/shifts/current");
             state.shift = data.item;

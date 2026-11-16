@@ -449,12 +449,27 @@ SECTIONS_MAP.users = async (host) => {
     });
   }
 
-  function openEdit(user) {
+  async function openEdit(user) {
     const name = textInput({ value: user.full_name });
     const email = textInput({ type: "email", value: user.email });
     const status = select({ value: user.status, options: ["active", "invited", "disabled"] });
     const pin = textInput({ placeholder: "Set a terminal PIN (optional)" });
+    const roleHost = h("div", { class: "col gap-2" });
     const errorHost = h("div");
+    let roleSelect = null;
+
+    if (user.company_id) {
+      try {
+        const detail = await get(`/developer/companies/${user.company_id}`);
+        const roles = detail.roles || [];
+        roleSelect = select({
+          value: user.role_id || "",
+          options: roles.map((role) => ({ value: role.id, label: role.name })),
+        });
+        roleHost.appendChild(field({ label: "Role", control: roleSelect, hint: "Set to Administrator to appoint another admin." }));
+      } catch { /* role picker is optional */ }
+    }
+
     const instance = modal({
       title: `Edit ${user.full_name}`,
       subtitle: user.company || "",
@@ -463,10 +478,12 @@ SECTIONS_MAP.users = async (host) => {
         field({ label: "Full name", control: name }),
         field({ label: "Email", control: email }),
         field({ label: "Status", control: status }),
+        roleHost,
         field({ label: "Terminal PIN", control: pin })),
       footer: [button("Cancel", { onClick: () => instance.close() }), button("Save", { variant: "primary", onClick: async () => {
         try {
           const payload = { full_name: name.value.trim(), email: email.value.trim(), status: status.value };
+          if (roleSelect && roleSelect.value) payload.role_id = Number(roleSelect.value);
           if (pin.value) payload.pin = pin.value;
           await patch(`/developer/users/${user.id}`, payload);
           toast("User updated.", "success");

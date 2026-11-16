@@ -6,6 +6,7 @@ from flask import Blueprint, jsonify, request
 
 from app.security import company_required, current_company, login_required, not_found, permission_required
 from app.services.reports import build_report, overview, public_registry, report_csv, today_dashboard
+from app.utils import iso, utcnow
 from app.utils import date_range
 
 bp = Blueprint("reports", __name__, url_prefix="/api/reports")
@@ -47,7 +48,8 @@ def overview_report():
     company = current_company()
     default_days = int(company.module_config("reports").get("default_range_days", 30) or 30)
     start, end = date_range(request.args, default_days=default_days, company=company)
-    payload = overview(company, start, end)
+    location_id = request.args.get("location_id", type=int)
+    payload = overview(company, start, end, location_id=location_id)
     return jsonify(payload)
 
 

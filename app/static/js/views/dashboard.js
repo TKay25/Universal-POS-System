@@ -21,6 +21,7 @@ export default async function dashboardView(ctx) {
   let today;
   let overview;
   let onboarding = null;
+  let insights = null;
 
   async function load() {
     const range = rangeFromPreset("30d", 29);
@@ -30,6 +31,9 @@ export default async function dashboardView(ctx) {
     ]);
     today = dashboardData;
     overview = overviewData;
+    if (hasPerm("reports.view")) {
+      insights = await get("/reports/insights").catch(() => null);
+    }
     if (hasPerm("settings.manage")) {
       onboarding = await get("/company/onboarding").catch(() => null);
     }
@@ -103,6 +107,8 @@ export default async function dashboardView(ctx) {
       }));
     }
     if (kpis.length) el.appendChild(h("div", { class: "grid grid--kpi mb-4" }, kpis));
+
+    if (insights) el.appendChild(renderInsights(insights));
 
     const grid = h("div", { class: "grid grid--dash" });
 
@@ -216,6 +222,61 @@ export default async function dashboardView(ctx) {
     }
 
     el.appendChild(grid);
+  }
+
+  function renderInsights(data) {
+    const growth = data.revenue.growth_percent;
+    const wrap = h("div", { class: "grid grid--3 mb-4" });
+
+    const card = (title, subtitle, body) => sectionCard({ title, subtitle, body });
+
+    wrap.appendChild(card("Revenue boost", "Last 30 days vs previous 30", h("div", { class: "col gap-3" },
+      h("div", { class: "flex items-end justify-between" },
+        h("div", { class: "kpi__value", style: { fontSize: "22px" } }, money(data.revenue.last_30_cents)),
+        growth == null
+          ? badge("New", "info")
+          : badge(`${growth > 0 ? "+" : ""}${growth}%`, growth >= 0 ? "success" : "danger")),
+      h("div", { class: "tiny dim" }, `Previous period ${money(data.revenue.previous_30_cents)}`),
+      h("div", { class: "progress" }, h("div", { class: "progress__bar", style: { width: `${Math.min(100, Math.max(4, (data.revenue.last_30_cents / Math.max(1, Math.max(data.revenue.last_30_cents, data.revenue.previous_30_cents))) * 100))}%` } })),
+      h("div", { class: "flex justify-between small" },
+        h("span", {}, `Today ${money(data.revenue.today_cents)}`),
+        h("span", { class: "dim" }, `Yesterday ${money(data.revenue.yesterday_cents)}`)))));
+
+    wrap.appendChild(card("Profit leaders", "Revenue minus buying price (30 days)", barList({
+      rows: (data.profit_leaders || []).map((row) => ({ label: row.name, value: row.profit_cents })),
+    })));
+
+    wrap.appendChild(card("Needs attention", "Slow movers and restock needs", h("div", { class: "col gap-2" },
+      (data.slow_movers || []).slice(0, 3).map((row) => h("div", { class: "flex items-center gap-2" },
+        h("div", { class: "grow", style: { minWidth: 0 } },
+          h("div", { class: "truncate small strong" }, row.name),
+          h("div", { class: "tiny dim" }, `${number(row.stock_qty, 0)} on hand`)),
+        badge(money(row.stock_value_cents), "warning"))),
+      !data.slow_movers?.length ? h("div", { class: "small dim" }, "Everything is moving - nice.") : null,
+      data.layby && data.layby.active
+        ? h("div", { class: "flex justify-between small" }, h("span", {}, "Lay-by outstanding"), h("span", { class: "num strong" }, money(data.layby.outstanding_cents)))
+        : null)));
+
+    const tipsCard = card("Management actions", `Busiest hour ${data.busiest_hour != null ? `${String(data.busiest_hour).padStart(2, "0")}:00` : "-"} / ${data.repeat_customers_30d} repeat customers`,
+      h("div", { class: "col gap-2" },
+        (data.tips || []).map((tip) => h("button", {
+          class: `alert alert--${tip.tone}`,
+          type: "button",
+          style: { textAlign: "left", cursor: "pointer" },
+          onClick: () => ctx.navigate(tip.route),
+        }, icon(tip.tone === "success" ? "check" : tip.tone === "danger" ? "warn" : "info"),
+        h("span", { class: "grow" },
+          h("span", { class: "strong" }, tip.title),
+          h("span", { class: "small" }, ` · ${tip.detail}`)))),
+        h("div", { class: "flex gap-2 mt-1" },
+          button("Open reports", { size: "sm", icon: "chart", onClick: () => ctx.navigate("/reports") }),
+          button("Manage stock", { size: "sm", variant: "ghost", icon: "layers", onClick: () => ctx.navigate("/inventory") }))));
+    wrap.appendChild(tipsCard);
+    return h("div", {}, h("div", { class: "flex items-center gap-2 mb-2" },
+      h("div", { class: "settings-card__title" }, "Quick insights"),
+      badge("For management", "primary"),
+      h("span", { class: "tiny dim" }, `As of ${data.local_today}`)),
+    wrap);
   }
 
   function renderOnboarding(data) {

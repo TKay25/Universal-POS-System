@@ -19,7 +19,7 @@ const SECTIONS = [
   { key: "modules", label: "Modules", icon: "sparkles", group: "Customisation" },
   { key: "fields", label: "Custom fields", icon: "sliders", group: "Customisation" },
   { key: "workspaces", label: "Custom workspaces", icon: "grid", group: "Customisation" },
-  { key: "locations", label: "Locations", icon: "map", group: "Operations" },
+  { key: "locations", label: "Branches & tills", icon: "map", group: "Operations" },
   { key: "users", label: "Team", icon: "users", group: "People", perms: ["users.manage"] },
   { key: "roles", label: "Roles & permissions", icon: "shield", group: "People", perms: ["users.manage"] },
   { key: "audit", label: "Activity log", icon: "list", group: "Governance", perms: ["audit.view"] },

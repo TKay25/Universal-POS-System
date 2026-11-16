@@ -23,6 +23,7 @@ export default async function productsView(ctx) {
   let departments = [];
   let taxes = [];
   let customFields = [];
+  let knownProducts = [];
 
   const tableHost = h("div");
   const categoryChips = h("div", { class: "chips" });
@@ -89,6 +90,7 @@ export default async function productsView(ctx) {
       departments = categoryData.departments || [];
       taxes = taxData.items;
       customFields = products.custom_fields || [];
+      knownProducts = products.items;
       meta = products.meta;
       renderChips();
       clear(tableHost);
@@ -204,7 +206,25 @@ export default async function productsView(ctx) {
   /* --------------------------------------------------------------------- */
   function openProductForm(product = null) {
     const isEdit = Boolean(product && product.id);
-    const name = textInput({ value: product?.name || "", placeholder: "Product name" });
+    const suggestionId = `product-suggestions-${Date.now()}`;
+    const name = textInput({
+      value: product?.name || "",
+      placeholder: "Product name",
+      attrs: { list: suggestionId },
+    });
+    const suggestions = h("datalist", { id: suggestionId },
+      knownProducts.map((row) => h("option", { value: row.name }, row.sku || "")));
+    const duplicateHint = h("div");
+    name.addEventListener("input", () => {
+      clear(duplicateHint);
+      const term = name.value.trim().toLowerCase();
+      if (!term) return;
+      const match = knownProducts.find((row) => row.name.toLowerCase() === term && row.id !== product?.id);
+      if (!match) return;
+      duplicateHint.appendChild(alertBox(
+        `${match.name} is already in the catalog (${fmtQty(match.stock_qty)} on hand). Use Receive stock in Inventory to add stock instead of creating a duplicate.`,
+        "warning"));
+    });
     const sku = textInput({ value: product?.sku || "", placeholder: "SKU-001" });
     const barcode = textInput({ value: product?.barcode || "", placeholder: "Scan or type a barcode" });
     const description = textarea({ value: product?.description || "", rows: 2 });
@@ -306,6 +326,8 @@ export default async function productsView(ctx) {
 
     const body = h("div", { class: "col gap-4" },
       errorHost,
+      duplicateHint,
+      suggestions,
       formGrid([
         field({ label: "Name", control: name, required: true, id: "product-name" }),
         field({ label: "SKU", control: sku }),
@@ -313,7 +335,7 @@ export default async function productsView(ctx) {
         field({ label: "Department", control: department }),
         field({ label: "Category", control: category }),
         field({ label: "Selling price", control: price, required: true, hint: `What customers pay, in ${currency().code}` }),
-        field({ label: "Buying price", control: cost, hint: "What you pay your supplier ? used for profit." }),
+        field({ label: "Buying price", control: cost, hint: "What you pay your supplier - used for profit." }),
         field({ label: "Tax rate", control: tax }),
         field({ label: "Unit", control: unit }),
       ]),

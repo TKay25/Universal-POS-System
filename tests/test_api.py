@@ -77,7 +77,7 @@ def test_self_service_signup_creates_workspace(client):
     payload = response.get_json()
     assert payload["company"]["slug"] == "signup-bakery"
     assert payload["company"]["settings"]["currency"]["code"] == "GBP"
-    assert payload["user"]["role"] == "Owner"
+    assert payload["user"]["role"] == "Administrator"
     assert payload["modules"]["pos"]["enabled"] is True
 
 

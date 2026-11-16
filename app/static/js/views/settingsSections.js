@@ -82,7 +82,8 @@ SECTION_RENDERERS.general = async (host) => {
   });
   const business = cfg.business || {};
   const legalName = textInput({ value: business.legal_name || "" });
-  const taxNumber = textInput({ value: business.tax_number || "" });
+  const taxNumber = textInput({ value: business.tax_number || "", placeholder: "VAT registration number" });
+  const companyRegNumber = textInput({ value: business.company_reg_number || "", placeholder: "Company registration number" });
   const phone = textInput({ value: business.phone || "" });
   const email = textInput({ value: business.email || "" });
   const website = textInput({ value: business.website || "" });
@@ -128,7 +129,8 @@ SECTION_RENDERERS.general = async (host) => {
     h("div", { class: "col gap-4" },
       formGrid([
         field({ label: "Legal / trading name", control: legalName }),
-        field({ label: "Tax / VAT number", control: taxNumber }),
+        field({ label: "VAT registration number", control: taxNumber, hint: "ZIMRA VAT number, printed on receipts" }),
+        field({ label: "Company registration number", control: companyRegNumber, hint: "Registrar of Companies number" }),
         field({ label: "Phone", control: phone }),
         field({ label: "Email", control: email }),
         field({ label: "Website", control: website }),
@@ -139,6 +141,7 @@ SECTION_RENDERERS.general = async (host) => {
       h("div", { class: "flex justify-end" }, saveButton("Save business details", () => saveSettings({
         business: {
           legal_name: legalName.value.trim(), tax_number: taxNumber.value.trim(),
+          company_reg_number: companyRegNumber.value.trim(),
           phone: phone.value.trim(), email: email.value.trim(), website: website.value.trim(),
           address: address.value.trim(), city: city.value.trim(), country: country.value.trim(),
         },
@@ -521,6 +524,7 @@ SECTION_RENDERERS.pos = async (host) => {
   const serviceOn = switchControl({ checked: moduleOn("service_charge"), label: "" });
   const holdersOn = switchControl({ checked: moduleOn("holders"), label: "" });
   const overridesOn = switchControl({ checked: moduleOn("price_overrides"), label: "" });
+  const laybyOn = switchControl({ checked: moduleOn("layby"), label: "" });
 
   host.appendChild(card("Till layout", "What the cashier sees and how the grid behaves",
     h("div", { class: "col gap-4" },
@@ -550,6 +554,7 @@ SECTION_RENDERERS.pos = async (host) => {
       switchRow({ title: "Service charge", hint: "Automatically add a percentage to each ticket.", checked: serviceOn.input.checked, onChange: (v) => { serviceOn.input.checked = v; } }),
       switchRow({ title: "Held orders", hint: "Park a cart and resume it later.", checked: holdersOn.input.checked, onChange: (v) => { holdersOn.input.checked = v; } }),
       switchRow({ title: "Price overrides", hint: "Allow trusted staff to edit a line price.", checked: overridesOn.input.checked, onChange: (v) => { overridesOn.input.checked = v; } }),
+      switchRow({ title: "Lay-by", hint: "Reserve goods on a deposit and collect instalments.", checked: laybyOn.input.checked, onChange: (v) => { laybyOn.input.checked = v; } }),
       h("div", { class: "flex justify-end mt-3" }, saveButton("Apply extras", async () => {
         await saveModule("tips", { enabled: tipsOn.input.checked }, "");
         await saveModule("order_notes", { enabled: notesOn.input.checked }, "");
@@ -557,6 +562,7 @@ SECTION_RENDERERS.pos = async (host) => {
         await saveModule("service_charge", { enabled: serviceOn.input.checked }, "");
         await saveModule("holders", { enabled: holdersOn.input.checked }, "");
         await saveModule("price_overrides", { enabled: overridesOn.input.checked }, "");
+        await saveModule("layby", { enabled: laybyOn.input.checked }, "");
         toast("Checkout extras updated.", "success");
       })))));
 };
@@ -1047,59 +1053,96 @@ SECTION_RENDERERS.locations = async (host) => {
   async function load() {
     clear(listHost);
     const data = await get("/company/locations");
-    for (const location of data.items) {
-      const registers = data.registers.filter((register) => register.location_id === location.id);
-      listHost.appendChild(h("div", { class: "card card--pad mb-2" },
-        h("div", { class: "flex items-center gap-2" },
+    const branches = data.items;
+    const registers = data.registers;
+
+    if (!branches.length) {
+      listHost.appendChild(emptyState({
+        icon: "map",
+        title: "No branches yet",
+        text: "Add every shop, branch or warehouse you sell from.",
+        action: button("Add branch", { variant: "primary", icon: "plus", onClick: () => openBranch() }),
+      }));
+      return;
+    }
+
+    for (const branch of branches) {
+      const branchRegisters = registers.filter((register) => register.location_id === branch.id);
+      const registerChips = h("div", { class: "chips mt-2" });
+      for (const register of branchRegisters) {
+        registerChips.appendChild(h("div", { class: "chip", style: { gap: "6px" } },
+          h("span", { class: "chip__dot", style: { background: branch.is_default ? "var(--primary)" : "var(--text-3)" } }),
+          h("span", {}, `${register.name}${register.code ? ` · ${register.code}` : ""}`),
+          iconButton("edit", { size: "sm", variant: "ghost", title: "Rename till", onClick: () => openRegister(branch, register) }),
+          iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Remove till", onClick: async () => {
+            const ok = await confirmDialog({ title: `Remove ${register.name}?`, message: "Past sales keep their branch history.", confirmLabel: "Remove", danger: true });
+            if (!ok) return;
+            await del(`/company/registers/${register.id}`);
+            toast("Till removed.", "success");
+            load();
+          } })));
+      }
+      if (!branchRegisters.length) registerChips.appendChild(h("span", { class: "tiny dim" }, "No tills yet"));
+
+      listHost.appendChild(h("div", { class: "card card--pad mb-2", style: { opacity: branch.is_active ? "1" : ".68" } },
+        h("div", { class: "flex items-center gap-2 wrap" },
           h("div", { class: "module-card__icon" }, icon("map")),
-          h("div", { class: "grow" },
-            h("div", { class: "strong" }, location.name, location.is_default ? badge("Default", "primary") : null),
-            h("div", { class: "tiny dim" }, [location.code, location.address, location.phone].filter(Boolean).join(" · ") || "No details")),
-          button("Add register", { size: "sm", icon: "plus", onClick: () => openRegister(location) }),
-          iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Delete location", onClick: async () => {
-            const ok = await confirmDialog({ title: `Delete ${location.name}?`, message: "Remove its registers first.", confirmLabel: "Delete", danger: true });
+          h("div", { class: "grow", style: { minWidth: "180px" } },
+            h("div", { class: "flex items-center gap-2" },
+              h("div", { class: "strong" }, branch.name),
+              branch.is_default ? badge("Default branch", "primary") : null,
+              branch.is_active ? badge("Open", "success") : badge("Closed")),
+            h("div", { class: "tiny dim" }, [branch.code, branch.address, branch.phone].filter(Boolean).join(" · ") || "No details yet")),
+          button("Add till", { size: "sm", icon: "plus", onClick: () => openRegister(branch) }),
+          iconButton("edit", { size: "sm", variant: "ghost", title: "Edit branch", onClick: () => openBranch(branch) }),
+          iconButton("star", { size: "sm", variant: "ghost", title: "Make default", onClick: async () => {
+            await patch(`/company/locations/${branch.id}`, { is_default: true });
+            toast("Default branch updated.", "success");
+            load();
+          } }),
+          iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Delete branch", onClick: async () => {
+            const ok = await confirmDialog({ title: `Delete ${branch.name}?`, message: "Remove its tills first. Past sales stay in reports.", confirmLabel: "Delete", danger: true });
             if (!ok) return;
             try {
-              await del(`/company/locations/${location.id}`);
-              toast("Location deleted.", "success");
+              await del(`/company/locations/${branch.id}`);
+              toast("Branch deleted.", "success");
               load();
             } catch (error) {
               toast(error.message, "error");
             }
           } })),
-        h("div", { class: "chips mt-2" },
-          registers.length
-            ? registers.map((register) => badge(`${register.name}${register.code ? ` · ${register.code}` : ""}`, "outline"))
-            : h("span", { class: "tiny dim" }, "No registers yet"))));
-    }
-    if (!data.items.length) {
-      listHost.appendChild(emptyState({ icon: "map", title: "No locations", text: "Add a store or branch to start selling there." }));
+        registerChips));
     }
   }
 
-  function openLocation() {
-    const name = textInput({ placeholder: "e.g. Avondale Branch" });
-    const code = textInput({ placeholder: "AVN" });
-    const address = textInput({ placeholder: "Address" });
-    const phone = textInput({ placeholder: "Phone" });
-    const isDefault = switchControl({ checked: false, label: "Default location" });
+  function openBranch(branch = null) {
+    const name = textInput({ value: branch?.name || "", placeholder: "e.g. Avondale Branch" });
+    const code = textInput({ value: branch?.code || "", placeholder: "AVN" });
+    const address = textInput({ value: branch?.address || "", placeholder: "Address" });
+    const phone = textInput({ value: branch?.phone || "", placeholder: "+263 77 123 4567" });
+    const isDefault = switchControl({ checked: Boolean(branch?.is_default), label: "Default branch for new sales" });
+    const isActive = switchControl({ checked: branch ? branch.is_active : true, label: "Open for trading" });
     const errorHost = h("div");
     const instance = modal({
-      title: "New location",
+      title: branch ? `Edit ${branch.name}` : "New branch",
+      subtitle: "Create as many branches as you trade from",
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
-        formGrid([field({ label: "Name", control: name, required: true }), field({ label: "Code", control: code })]),
+        formGrid([field({ label: "Branch name", control: name, required: true }), field({ label: "Code", control: code })]),
         field({ label: "Address", control: address }),
         field({ label: "Phone", control: phone }),
-        isDefault),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button("Add location", { variant: "primary", onClick: async () => {
+        isDefault, isActive),
+      footer: [button("Cancel", { onClick: () => instance.close() }), button(branch ? "Save branch" : "Add branch", { variant: "primary", onClick: async () => {
         try {
-          await post("/company/locations", {
+          const payload = {
             name: name.value.trim(), code: code.value.trim(), address: address.value.trim(),
-            phone: phone.value.trim(), is_default: isDefault.input.checked,
-          });
-          toast("Location added.", "success");
+            phone: phone.value.trim(), is_default: isDefault.input.checked, is_active: isActive.input.checked,
+          };
+          if (branch) await patch(`/company/locations/${branch.id}`, payload);
+          else await post("/company/locations", payload);
+          toast("Branch saved.", "success");
           instance.close();
+          await refreshSession();
           load();
         } catch (error) {
           clear(errorHost);
@@ -1109,19 +1152,30 @@ SECTION_RENDERERS.locations = async (host) => {
     });
   }
 
-  function openRegister(location) {
-    const name = textInput({ placeholder: "e.g. Counter 2" });
-    const code = textInput({ placeholder: "C2" });
+  function openRegister(branch, register = null) {
+    const name = textInput({ value: register?.name || "", placeholder: "e.g. Counter 2" });
+    const code = textInput({ value: register?.code || "", placeholder: "C2" });
+    const isActive = switchControl({ checked: register ? register.is_active : true, label: "Active" });
     const errorHost = h("div");
     const instance = modal({
-      title: `New register · ${location.name}`,
+      title: register ? `Edit ${register.name}` : `New till · ${branch.name}`,
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
-        formGrid([field({ label: "Name", control: name, required: true }), field({ label: "Code", control: code })])),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button("Add register", { variant: "primary", onClick: async () => {
+        formGrid([field({ label: "Till name", control: name, required: true }), field({ label: "Code", control: code })]),
+        isActive),
+      footer: [button("Cancel", { onClick: () => instance.close() }), button(register ? "Save till" : "Add till", { variant: "primary", onClick: async () => {
         try {
-          await post("/company/registers", { name: name.value.trim(), code: code.value.trim(), location_id: location.id });
-          toast("Register added.", "success");
+          if (register) {
+            await patch(`/company/registers/${register.id}`, {
+              name: name.value.trim(), code: code.value.trim(), is_active: isActive.input.checked,
+            });
+          } else {
+            await post("/company/registers", {
+              name: name.value.trim(), code: code.value.trim(), location_id: branch.id,
+              is_active: isActive.input.checked,
+            });
+          }
+          toast("Till saved.", "success");
           instance.close();
           load();
         } catch (error) {
@@ -1132,9 +1186,11 @@ SECTION_RENDERERS.locations = async (host) => {
     });
   }
 
-  host.appendChild(card("Locations & registers", "Sell from more than one place",
+  host.appendChild(card("Branches & tills", "Every shop branch under this company, and the tills inside them",
     h("div", { class: "col gap-3" },
-      h("div", { class: "flex justify-end" }, button("Add location", { variant: "primary", icon: "plus", onClick: openLocation })),
+      h("div", { class: "flex justify-between items-center wrap gap-2" },
+        badge(`${moduleOn("multi_location") ? "Multi-branch enabled" : "Single branch"}`, moduleOn("multi_location") ? "success" : "warning"),
+        button("Add branch", { variant: "primary", icon: "plus", onClick: () => openBranch() })),
       listHost)));
   await load();
 };
@@ -1260,7 +1316,7 @@ SECTION_RENDERERS.roles = async (host) => {
           h("div", { class: "grow" },
             h("div", { class: "strong" }, role.name, role.is_system ? badge("System", "primary") : null),
             h("div", { class: "tiny dim" }, `${role.user_count} staff · ${role.permissions.length} permissions`)),
-          role.name === "Owner" ? badge("All access", "success") : button("Edit", { size: "sm", icon: "edit", onClick: () => openForm(role) }),
+          role.name === "Administrator" ? badge("All access", "success") : button("Edit", { size: "sm", icon: "edit", onClick: () => openForm(role) }),
           role.is_system ? null : iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Delete", onClick: async () => {
             const ok = await confirmDialog({ title: `Delete ${role.name}?`, message: "Move staff out of this role first.", confirmLabel: "Delete", danger: true });
             if (!ok) return;

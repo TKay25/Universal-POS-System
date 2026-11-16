@@ -45,7 +45,7 @@ COFFEE_PRODUCTS = [
     ("Americano", "Coffee Bar", "Coffee", 300, 120, "cup-hot", True),
     ("Flat White", "Coffee Bar", "Coffee", 380, 160, "cup", True),
     ("Cappuccino", "Coffee Bar", "Coffee", 380, 155, "cup-hot", True),
-    ("Caff? Latte", "Coffee Bar", "Coffee", 400, 165, "cup", True),
+    ("Caffè Latte", "Coffee Bar", "Coffee", 400, 165, "cup", True),
     ("Mocha", "Coffee Bar", "Coffee", 450, 190, "cup-hot", False),
     ("Cold Brew", "Coffee Bar", "Coffee", 420, 150, "cup-straw", True),
     ("Pour Over", "Coffee Bar", "Coffee", 480, 175, "cup", False),
@@ -581,7 +581,7 @@ def seed_all(app) -> dict:
     _seed_laybys(
         nova, [nova_owner, nova_manager], nova_customers, nova_products, nova.methods,
         plans=[
-            (0, [0], 0.30, 45, True),          # Smart TV 55" ? half paid already
+            (0, [0], 0.30, 45, True),          # Smart TV 55" - half paid already
             (1, [1, 2], 0.25, 60, False),      # 32" TV + soundbar
         ],
         seed_value=3,

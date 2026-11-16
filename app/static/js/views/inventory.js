@@ -261,7 +261,7 @@ export default async function inventoryView(ctx) {
     const newHost = h("div", { class: "col gap-3 hidden" });
 
     const search = textInput({
-      placeholder: "Start typing a product name, SKU or barcode?",
+      placeholder: "Start typing a product name, SKU or barcode…",
       value: product?.name || "",
       attrs: { list: dataListId },
     });
@@ -269,13 +269,13 @@ export default async function inventoryView(ctx) {
       value: product?.id || "",
       options: products.map((row) => ({
         value: row.id,
-        label: `${row.name}${row.sku ? ` ? ${row.sku}` : ""} (${fmtQty(row.stock_qty)} on hand)`,
+        label: `${row.name}${row.sku ? ` · ${row.sku}` : ""} (${fmtQty(row.stock_qty)} on hand)`,
       })),
-      placeholder: products.length ? "Choose a product" : "No products yet ? create one below",
+      placeholder: products.length ? "Choose a product" : "No products yet - create one below",
     });
     const quantity = textInput({ type: "number", step: "0.001", placeholder: "0" });
-    const buyingPrice = moneyInput({ placeholder: "Optional ? updates buying price" });
-    const sellingPrice = moneyInput({ placeholder: "Optional ? updates selling price" });
+    const buyingPrice = moneyInput({ placeholder: "Optional - updates buying price" });
+    const sellingPrice = moneyInput({ placeholder: "Optional - updates selling price" });
     const supplier = select({ value: "", options: [{ value: "", label: "No supplier" }] });
     const reference = textInput({ placeholder: "Invoice / delivery note" });
     const note = textInput({ placeholder: "e.g. Weekly coffee delivery" });
@@ -344,7 +344,7 @@ export default async function inventoryView(ctx) {
       duplicateHint.appendChild(alertBox(
         h("div", { class: "col gap-1" },
           h("div", {}, h("strong", {}, `${match.name} is already in your catalog.`),
-            ` ${fmtQty(match.stock_qty)} on hand${match.sku ? ` ? ${match.sku}` : ""}. Add stock to it instead of creating a duplicate.`),
+            ` ${fmtQty(match.stock_qty)} on hand${match.sku ? ` · ${match.sku}` : ""}. Add stock to it instead of creating a duplicate.`),
           button("Add stock to this product", {
             size: "sm",
             variant: "soft",
@@ -401,7 +401,7 @@ export default async function inventoryView(ctx) {
       field({ label: "Note", control: note }),
     ]));
 
-    newHost.appendChild(field({ label: "Product name", control: newName, required: true, hint: "Start typing ? if it exists, we will offer to add stock instead." }));
+    newHost.appendChild(field({ label: "Product name", control: newName, required: true, hint: "Start typing - if it exists, we will offer to add stock instead." }));
     newHost.appendChild(formGrid([
       field({ label: "SKU", control: newSku }),
       field({ label: "Barcode", control: newBarcode }),

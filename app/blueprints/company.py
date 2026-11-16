@@ -554,6 +554,32 @@ def create_register():
     return jsonify({"item": register.to_dict()}), 201
 
 
+@bp.patch("/registers/<int:register_id>")
+@login_required
+@company_required
+@permission_required("settings.manage")
+def update_register(register_id: int):
+    company = current_company()
+    register = get_scoped(Register, register_id, company.id)
+    payload = validate(
+        request.get_json(silent=True) or {},
+        {
+            "name": {"type": "str", "max_len": 80},
+            "code": {"type": "str", "max_len": 20},
+            "location_id": {"type": "int"},
+            "is_active": {"type": "bool"},
+        },
+    )
+    if payload.get("location_id"):
+        get_scoped(Location, payload["location_id"], company.id)
+    for key, value in payload.items():
+        setattr(register, key, value)
+    db.session.commit()
+    audit("register.updated", entity="register", entity_id=register.id,
+          summary=f"Updated register {register.name}", commit=True)
+    return jsonify({"item": register.to_dict()})
+
+
 @bp.delete("/registers/<int:register_id>")
 @login_required
 @company_required
