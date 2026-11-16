@@ -89,3 +89,56 @@ export function icon(name, extra = "") {
 }
 
 export const ICON_NAMES = Object.keys(PATHS);
+
+/* --------------------------------------------------------------------------
+   Product icon set ? Bootstrap-icon style object glyphs for catalog items.
+   Names are what gets stored on the product (e.g. "cup-hot", "tv", "drill").
+   -------------------------------------------------------------------------- */
+const PRODUCT_PATHS = {
+  box: '<path d="M21 8.5 12 3 3 8.5v7L12 21l9-5.5z"/><path d="M3 8.5 12 14l9-5.5"/><path d="M12 14v7"/>',
+  "cup-hot": '<path d="M4 8h11v7a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4z"/><path d="M15 9h2.5a2.5 2.5 0 0 1 0 5H15"/><path d="M7 3.5c-.8.9-.8 1.6 0 2.5M10.5 3.5c-.8.9-.8 1.6 0 2.5"/>',
+  cup: '<path d="M5 7h11v8a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4z"/><path d="M16 9h2a2 2 0 0 1 0 4h-2"/><path d="M5 7h11"/>',
+  "cup-straw": '<path d="M5 8h11l-1.2 9.2A3 3 0 0 1 11.8 20H9.2a3 3 0 0 1-3-2.8z"/><path d="m13 8 2-5"/><path d="M5 11h11"/>',
+  bread: '<path d="M4 10a4 4 0 0 1 4-4h8a4 4 0 0 1 0 8v4H4z"/><path d="M8 12v6M12 12v6M16 12v6"/>',
+  cake: '<path d="M5 20h14v-6a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3z"/><path d="M5 15c1.5 1 3 1 4.5 0S12 14 13.5 15s3 1 4.5 0"/><path d="M12 8V5"/><path d="M12 3.5h.01"/>',
+  bag: '<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>',
+  tv: '<rect x="2.5" y="4.5" width="19" height="12" rx="2"/><path d="M8 20h8M12 16.5V20"/>',
+  speaker: '<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><circle cx="12" cy="15" r="3"/><circle cx="12" cy="7" r="1.4"/>',
+  headset: '<path d="M4 13v-1a8 8 0 0 1 16 0v1"/><rect x="2.5" y="13" width="4" height="6" rx="1.6"/><rect x="17.5" y="13" width="4" height="6" rx="1.6"/><path d="M19.5 19v.5a2.5 2.5 0 0 1-2.5 2.5h-3"/>',
+  solar: '<rect x="3" y="4" width="18" height="11" rx="1.5"/><path d="M9 4v11M15 4v11M3 9.5h18"/><path d="M12 15v4M8 20h8"/>',
+  bolt: '<path d="M13 2 5 14h6l-1 8 8-12h-6z"/>',
+  battery: '<rect x="2.5" y="7" width="17" height="10" rx="2"/><path d="M21.5 10.5v3"/><path d="M6 10.5v3M9.5 10.5v3M13 10.5v3"/>',
+  microwave: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><rect x="5" y="8" width="10" height="8" rx="1"/><path d="M18 9h.01M18 12h.01M18 15h.01"/>',
+  kettle: '<path d="M6 9h9v7a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4z"/><path d="M15 11h2.5a2 2 0 0 1 0 4H15"/><path d="M9 9V6h3v3"/><path d="M6 9 4 7"/>',
+  drill: '<path d="M3 10h11v4H3z"/><path d="M14 11h3l4 2-4 3h-3z"/><path d="M6 14v4h5v-4"/><path d="M7 10V7h6v3"/>',
+  tools: '<path d="M14.5 3.5a4.5 4.5 0 0 0-6 6L3 15l3 3 5.5-5.5a4.5 4.5 0 0 0 6-6L15 9l-2.5-.5L12 6z"/>',
+  paint: '<path d="M4 9h10v6H4z"/><path d="M9 9V6h6a2 2 0 0 1 0 4h-1"/><path d="M6 15v3a2 2 0 0 0 2 2h2"/>',
+  ruler: '<rect x="2.5" y="8" width="19" height="8" rx="1.6"/><path d="M6 8v3M10 8v4M14 8v3M18 8v4"/>',
+  pipe: '<path d="M4 6h7a4 4 0 0 1 4 4v8"/><path d="M2.5 4.5h3v3h-3z"/><path d="M13 16.5h3v3h-3z"/>',
+  droplet: '<path d="M12 3.5s6 6 6 10a6 6 0 0 1-12 0c0-4 6-10 6-10z"/>',
+  fuel: '<rect x="4" y="4" width="9" height="16" rx="1.6"/><path d="M6.5 7h4"/><path d="M13 9h3l3 3v6a1.5 1.5 0 0 1-3 0v-3h-3"/>',
+  sofa: '<path d="M4 12V9a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3"/><path d="M2.5 12h19v6h-2v2h-3v-2H8.5v2h-3v-2h-3z"/><path d="M6 12v-2M18 12v-2"/>',
+  table: '<path d="M3 8h18"/><path d="M5 8v12M19 8v12"/><path d="M3 8l1.5-3h15L21 8"/><path d="M5 12h14"/>',
+  chair: '<path d="M7 3.5h10v9H7z"/><path d="M5 12.5h14v3H5z"/><path d="M7 15.5v5M17 15.5v5"/>',
+  plate: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/>',
+  pot: '<path d="M4 10h16v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M2.5 10h19"/><path d="M8 7c0-1 1-1.5 1-2.5M12 7c0-1 1-1.5 1-2.5M16 7c0-1 1-1.5 1-2.5"/>',
+  glass: '<path d="M7 3h10l-1 7a4 4 0 0 1-8 0z"/><path d="M12 14v6M8 20h8"/>',
+  shirt: '<path d="M8 3 4 6l2 3 2-1v13h8V8l2 1 2-3-4-3-3 2z"/>',
+  gem: '<path d="M6 3h12l3 6-9 12L3 9z"/><path d="M3 9h18M9 3 7 9l5 12M15 3l2 6-5 12"/>',
+  star: '<path d="m12 3.5 2.7 5.6 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1L3.2 10l6.1-.9z"/>',
+  cart: '<circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3.5h2.2l2.4 11.2h11.6l1.8-8H6"/>',
+  phone: '<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/>',
+};
+
+export const PRODUCT_ICON_NAMES = Object.keys(PRODUCT_PATHS);
+
+export function productIconHTML(name = "box", cls = "product-icon") {
+  const body = PRODUCT_PATHS[name] || PRODUCT_PATHS.box;
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+
+export function productIcon(name = "box", cls = "product-icon") {
+  TEMPLATE.innerHTML = productIconHTML(name, cls);
+  return TEMPLATE.content.firstElementChild;
+}
+
