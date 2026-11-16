@@ -1,2 +1,23 @@
-# Artifacto — generated semantic artifacts (auto-updated by plugin)
+# Artifacto - generated semantic artifacts (auto-updated by plugin)
 artifacts/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local database and uploads
+instance/
+*.db
+*.sqlite3
+
+# Local secrets (Postgres URL etc.)
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

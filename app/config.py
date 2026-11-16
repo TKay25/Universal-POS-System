@@ -12,6 +12,37 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_dotenv(path: Path) -> None:
+    """Load simple KEY=VALUE pairs from a local .env file (never committed)."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
+
+
+_load_dotenv(BASE_DIR / ".env")
+
+
+def _database_url() -> str:
+    """Resolve the SQLAlchemy URL, preferring an explicit Postgres connection."""
+    raw = (os.environ.get("POS_DATABASE_URL") or os.environ.get("DATABASE_URL") or "").strip()
+    if not raw:
+        return f"sqlite:///{(BASE_DIR / 'instance' / 'universal_pos.db').as_posix()}"
+    if raw.startswith("postgres://"):
+        raw = "postgresql://" + raw[len("postgres://"):]
+    if raw.startswith("postgresql://") or raw.startswith("postgresql+psycopg2://"):
+        host = raw.split("@")[-1]
+        is_local = host.startswith(("localhost", "127.0.0.1", "::1"))
+        if not is_local and "sslmode=" not in raw:
+            raw += ("&" if "?" in raw else "?") + "sslmode=require"
+    return raw
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -21,11 +52,9 @@ def _env_bool(name: str, default: bool) -> bool:
 
 class Config:
     SECRET_KEY = os.environ.get("POS_SECRET_KEY", "dev-secret-change-me-in-production")
-    SQLALCHEMY_DATABASE_URI = os.environ.get(
-        "POS_DATABASE_URL", f"sqlite:///{(BASE_DIR / 'instance' / 'universal_pos.db').as_posix()}"
-    )
+    SQLALCHEMY_DATABASE_URI = _database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
+    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
 
     JSON_SORT_KEYS = False
     SESSION_COOKIE_HTTPONLY = True

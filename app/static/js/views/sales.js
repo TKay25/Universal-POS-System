@@ -182,7 +182,7 @@ export default async function salesView(ctx) {
   }
 
   function openReceiptLookup() {
-    const input = textInput({ placeholder: "e.g. INV-00042" });
+    const input = textInput({ placeholder: "e.g. REC-00042" });
     const errorHost = h("div");
     const instance = modal({
       title: "Find a receipt",

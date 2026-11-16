@@ -81,11 +81,24 @@ def _modifier(company=None) -> str:
     return f"{sign}{abs(minutes)} minutes"
 
 
+def _dialect() -> str:
+    try:
+        return db.engine.dialect.name
+    except Exception:  # pragma: no cover - outside an app context
+        return "sqlite"
+
+
 def local_date_sql(column, company=None):
-    """SQLite expression yielding the local YYYY-MM-DD for a UTC timestamp."""
+    """SQL expression yielding the local YYYY-MM-DD for a UTC timestamp."""
+    if _dialect() == "postgresql":
+        offset = offset_minutes(company) * 60
+        return func.date(column + func.make_interval(0, 0, 0, 0, 0, 0, offset))
     return func.date(func.datetime(column, _modifier(company)))
 
 
 def local_hour_sql(column, company=None):
-    """SQLite expression yielding the local hour (00-23) for a UTC timestamp."""
+    """SQL expression yielding the local hour (00-23) for a UTC timestamp."""
+    if _dialect() == "postgresql":
+        offset = offset_minutes(company) * 60
+        return func.extract("hour", column + func.make_interval(0, 0, 0, 0, 0, 0, offset))
     return func.strftime("%H", func.datetime(column, _modifier(company)))

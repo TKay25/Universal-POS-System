@@ -3,7 +3,7 @@
 import { h, clear } from "../core/dom.js";
 import { icon, productIcon } from "../core/icons.js";
 import { money, number, qty as fmtQty, dateTime } from "../core/fmt.js";
-import { get, post, patch, del } from "../core/http.js";
+import { get, post, del } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox,
@@ -12,7 +12,7 @@ import {
 
 export default async function inventoryView(ctx) {
   const el = h("div");
-  const state = { tab: "levels", products: [], movements: [], suppliers: [], meta: null, movementMeta: null };
+  const state = { tab: "levels", products: [], movements: [], suppliers: [], meta: null, movementMeta: null, loaded: false };
 
   el.appendChild(pageHeader({
     title: "Inventory",
@@ -45,6 +45,10 @@ export default async function inventoryView(ctx) {
       },
     }));
     tabsHost.appendChild(h("div", { class: "mt-4" }));
+    if (state.tab === "levels" && !state.loaded) {
+      tabsHost.appendChild(h("div", { class: "loading-block" }, h("div", { class: "spinner" }), h("span", {}, "Loading stock")));
+      return;
+    }
     if (state.tab === "levels") tabsHost.appendChild(levelsCard());
     if (state.tab === "movements") tabsHost.appendChild(movementsCard());
     if (state.tab === "suppliers") tabsHost.appendChild(suppliersCard());
@@ -60,7 +64,7 @@ export default async function inventoryView(ctx) {
         empty: { icon: "layers", title: "No products to track", text: "Add products and enable stock tracking." },
         columns: [
           { key: "name", label: "Product", render: (row) => h("div", { class: "flex items-center gap-2" },
-            h("div", { class: "module-card__icon", style: { fontSize: "15px" } }, row.emoji || "📦"),
+            h("div", { class: "module-card__icon product-icon", style: { fontSize: "15px" } }, productIcon(row.icon)),
             h("div", {}, h("div", { class: "strong" }, row.name), h("div", { class: "tiny dim" }, row.sku || "—"))) },
           { key: "category", label: "Category", render: (row) => row.category || h("span", { class: "dim" }, "—") },
           { key: "stock_qty", label: "On hand", align: "right", render: (row) => row.track_stock ? h("span", { class: "strong num" }, fmtQty(row.stock_qty)) : h("span", { class: "dim" }, "untracked") },
@@ -118,6 +122,7 @@ export default async function inventoryView(ctx) {
   async function loadProducts() {
     const data = await get("/products", { per_page: 200, active: "1" });
     state.products = data.items;
+    state.loaded = true;
     renderKpis();
     if (state.tab === "levels") render();
   }
@@ -456,9 +461,6 @@ export default async function inventoryView(ctx) {
             unit: newUnit.value.trim() || "unit",
             icon: "box",
           });
-          if (reference.value.trim()) {
-            await patch(`/products/${item.id}`, {}).catch(() => {});
-          }
           toast(`${item.name} added to the catalog.`, "success");
         }
         instance.close();

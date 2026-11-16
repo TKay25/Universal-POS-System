@@ -84,7 +84,7 @@ DEFAULT_SETTINGS: dict = {
         "density": "comfortable",
     },
     "sales": {
-        "prefix": "INV-",
+        "prefix": "REC-",
         "next_number": 1,
         "number_padding": 5,
         "default_tax_rate_id": None,

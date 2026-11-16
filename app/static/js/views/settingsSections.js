@@ -251,7 +251,7 @@ SECTION_RENDERERS.branding = async (host) => {
 /* ------------------------------------------------------------------------- */
 SECTION_RENDERERS.sales = async (host) => {
   const cfg = settings().sales || {};
-  const prefix = textInput({ value: cfg.prefix || "INV-" });
+  const prefix = textInput({ value: cfg.prefix || "REC-" });
   const nextNumber = textInput({ type: "number", value: String(cfg.next_number || 1) });
   const padding = textInput({ type: "number", value: String(cfg.number_padding ?? 5) });
   const allowZero = switchControl({ checked: Boolean(cfg.allow_zero_price), label: "Allow zero-value sales" });
@@ -268,9 +268,9 @@ SECTION_RENDERERS.sales = async (host) => {
   host.appendChild(card("Receipt numbering", "Controls the numbers customers see",
     h("div", { class: "col gap-4" },
       formGrid([
-        field({ label: "Prefix", control: prefix, hint: "e.g. INV- or AUR-" }),
+        field({ label: "Prefix", control: prefix, hint: "e.g. REC- or AUR-" }),
         field({ label: "Next number", control: nextNumber }),
-        field({ label: "Zero padding", control: padding, hint: "5 → INV-00042" }),
+        field({ label: "Zero padding", control: padding, hint: "5 → REC-00042" }),
       ]),
       preview,
       h("div", { class: "flex justify-end" }, saveButton("Save numbering", () => saveSettings({

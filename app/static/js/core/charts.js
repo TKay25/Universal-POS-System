@@ -29,88 +29,146 @@ function niceMax(value) {
   return step * magnitude;
 }
 
+/* ------------------------------------------------------------------------- */
+/* Responsive chart host                                                     */
+/* ------------------------------------------------------------------------- */
+const liveCharts = new Set();
+let resizeBound = false;
+
+function bindGlobalResize() {
+  if (resizeBound) return;
+  resizeBound = true;
+  window.addEventListener("resize", () => {
+    for (const chart of Array.from(liveCharts)) {
+      if (!chart.host.isConnected) liveCharts.delete(chart);
+      else chart.draw();
+    }
+  });
+}
+
+function responsiveChart(height, draw) {
+  const host = h("div", { class: "chart-host", style: { width: "100%", height: `${height}px` } });
+  const entry = { host, draw: null };
+  let lastWidth = 0;
+
+  entry.draw = () => {
+    if (!host.isConnected) {
+      liveCharts.delete(entry);
+      return;
+    }
+    const width = Math.round(host.clientWidth || host.parentElement?.clientWidth || 0);
+    if (width < 120 || Math.abs(width - lastWidth) < 2) return;
+    lastWidth = width;
+    clear(host);
+    host.appendChild(draw(width));
+  };
+
+  liveCharts.add(entry);
+  bindGlobalResize();
+  if (typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      if (!host.isConnected) {
+        observer.disconnect();
+        liveCharts.delete(entry);
+        return;
+      }
+      entry.draw();
+    });
+    observer.observe(host);
+  }
+  requestAnimationFrame(() => entry.draw());
+  return host;
+}
+
 export function areaChart({ points = [], labels = [], height = 240, color = "var(--primary)", formatValue = money,
   series = null } = {}) {
-  const width = 960;
-  const padLeft = 52;
-  const padRight = 12;
-  const padTop = 16;
-  const padBottom = 26;
-  const plotW = width - padLeft - padRight;
-  const plotH = height - padTop - padBottom;
-  const id = `grad${++uid}`;
+  const dataSeries = series && series.length ? series : [{ name: "Sales", color, values: points }];
 
-  const dataSeries = series && series.length
-    ? series
-    : [{ name: "Sales", color, values: points }];
-  const allValues = dataSeries.flatMap((line) => line.values || []);
-  const max = niceMax(Math.max(...allValues, 1));
+  return responsiveChart(height, (width) => {
+    const padLeft = width < 420 ? 36 : 48;
+    const padRight = 12;
+    const padTop = 16;
+    const padBottom = 26;
+    const plotW = Math.max(10, width - padLeft - padRight);
+    const plotH = height - padTop - padBottom;
+    const id = `grad${++uid}`;
 
-  const count = Math.max((dataSeries[0].values || []).length, 1);
-  const xFor = (index) => padLeft + (count === 1 ? plotW / 2 : (index / (count - 1)) * plotW);
-  const yFor = (value) => padTop + plotH - (value / max) * plotH;
+    const allValues = dataSeries.flatMap((line) => line.values || []);
+    const max = niceMax(Math.max(...allValues, 1));
+    const count = Math.max((dataSeries[0]?.values || []).length, 1);
+    const xFor = (index) => padLeft + (count === 1 ? plotW / 2 : (index / (count - 1)) * plotW);
+    const yFor = (value) => padTop + plotH - (value / max) * plotH;
 
-  const svg = s("svg", {
-    class: "chart",
-    viewBox: `0 0 ${width} ${height}`,
-    style: `height:${height}px;width:100%`,
-    role: "img",
-  });
-
-  const defs = s("defs");
-  for (const line of dataSeries) {
-    const gradient = s("linearGradient", { id: `${id}-${line.name.replace(/\W/g, "")}`, x1: "0", y1: "0", x2: "0", y2: "1" });
-    gradient.appendChild(s("stop", { offset: "0%", "stop-color": line.color || color, "stop-opacity": ".34" }));
-    gradient.appendChild(s("stop", { offset: "100%", "stop-color": line.color || color, "stop-opacity": "0" }));
-    defs.appendChild(gradient);
-  }
-  svg.appendChild(defs);
-
-  const grid = s("g", { class: "chart__grid" });
-  for (let i = 0; i <= 4; i += 1) {
-    const value = (max / 4) * i;
-    const y = yFor(value);
-    grid.appendChild(s("line", { x1: padLeft, x2: width - padRight, y1: y, y2: y }));
-    grid.appendChild(s("text", { x: padLeft - 8, y: y + 3, "text-anchor": "end" }, shortValue(value)));
-  }
-  svg.appendChild(grid);
-
-  const labelStep = Math.ceil(count / 7);
-  const labelGroup = s("g");
-  for (let i = 0; i < count; i += labelStep) {
-    labelGroup.appendChild(
-      s("text", { x: xFor(i), y: height - 8, "text-anchor": "middle" }, labels[i] || "")
-    );
-  }
-  if (count > 1 && (count - 1) % labelStep !== 0) {
-    labelGroup.appendChild(s("text", { x: xFor(count - 1), y: height - 8, "text-anchor": "middle" }, labels[count - 1] || ""));
-  }
-  svg.appendChild(labelGroup);
-
-  for (const line of dataSeries) {
-    const values = line.values || [];
-    if (!values.length) continue;
-    const stroke = line.color || color;
-    const path = values.map((value, index) => `${index === 0 ? "M" : "L"}${xFor(index).toFixed(1)},${yFor(value).toFixed(1)}`).join(" ");
-    const areaPath = `${path} L${xFor(values.length - 1).toFixed(1)},${padTop + plotH} L${xFor(0).toFixed(1)},${padTop + plotH} Z`;
-    svg.appendChild(s("path", {
-      d: areaPath,
-      fill: `url(#${id}-${line.name.replace(/\W/g, "")})`,
-      class: "chart__area",
-    }));
-    svg.appendChild(s("path", { d: path, class: "chart__line", stroke }));
-    values.forEach((value, index) => {
-      if (count > 4 && index % Math.max(1, Math.floor(count / 6)) !== 0 && index !== count - 1) return;
-      const dot = s("circle", {
-        cx: xFor(index), cy: yFor(value), r: 3, fill: stroke, class: "chart__dot",
-      });
-      const title = s("title", {}, `${labels[index] || ""} · ${formatValue(value)}`);
-      dot.appendChild(title);
-      svg.appendChild(dot);
+    const svg = s("svg", {
+      class: "chart",
+      viewBox: `0 0 ${width} ${height}`,
+      style: `height:${height}px;width:100%`,
+      role: "img",
     });
-  }
 
-  return svg;
+    const defs = s("defs");
+    for (const line of dataSeries) {
+      const gradient = s("linearGradient", {
+        id: `${id}-${line.name.replace(/\W/g, "")}`,
+        x1: "0", y1: "0", x2: "0", y2: "1",
+      });
+      gradient.appendChild(s("stop", { offset: "0%", "stop-color": line.color || color, "stop-opacity": ".34" }));
+      gradient.appendChild(s("stop", { offset: "100%", "stop-color": line.color || color, "stop-opacity": "0" }));
+      defs.appendChild(gradient);
+    }
+    svg.appendChild(defs);
+
+    const grid = s("g", { class: "chart__grid" });
+    for (let i = 0; i <= 4; i += 1) {
+      const value = (max / 4) * i;
+      const y = yFor(value);
+      grid.appendChild(s("line", { x1: padLeft, x2: width - padRight, y1: y, y2: y }));
+      grid.appendChild(s("text", { x: padLeft - 7, y: y + 3, "text-anchor": "end" }, shortValue(value)));
+    }
+    svg.appendChild(grid);
+
+    const maxLabels = Math.max(3, Math.floor(plotW / 86));
+    const labelStep = Math.max(1, Math.ceil(count / maxLabels));
+    const labelGroup = s("g");
+    for (let i = 0; i < count; i += labelStep) {
+      labelGroup.appendChild(
+        s("text", { x: xFor(i), y: height - 8, "text-anchor": "middle" }, labels[i] || "")
+      );
+    }
+    if (count > 1 && (count - 1) % labelStep !== 0) {
+      labelGroup.appendChild(
+        s("text", { x: xFor(count - 1), y: height - 8, "text-anchor": "middle" }, labels[count - 1] || "")
+      );
+    }
+    svg.appendChild(labelGroup);
+
+    for (const line of dataSeries) {
+      const values = line.values || [];
+      if (!values.length) continue;
+      const stroke = line.color || color;
+      const path = values
+        .map((value, index) => `${index === 0 ? "M" : "L"}${xFor(index).toFixed(1)},${yFor(value).toFixed(1)}`)
+        .join(" ");
+      const areaPath = `${path} L${xFor(values.length - 1).toFixed(1)},${padTop + plotH} L${xFor(0).toFixed(1)},${padTop + plotH} Z`;
+      svg.appendChild(s("path", {
+        d: areaPath,
+        fill: `url(#${id}-${line.name.replace(/\W/g, "")})`,
+        class: "chart__area",
+      }));
+      svg.appendChild(s("path", { d: path, class: "chart__line", stroke }));
+      const dotStep = Math.max(1, Math.floor(count / Math.max(4, Math.floor(plotW / 70))));
+      values.forEach((value, index) => {
+        if (count > 4 && index % dotStep !== 0 && index !== count - 1) return;
+        const dot = s("circle", {
+          cx: xFor(index), cy: yFor(value), r: 3, fill: stroke, class: "chart__dot",
+        });
+        dot.appendChild(s("title", {}, `${labels[index] || ""} · ${formatValue(value)}`));
+        svg.appendChild(dot);
+      });
+    }
+
+    return svg;
+  });
 }
 
 function shortValue(value) {
@@ -124,7 +182,12 @@ export function donutChart({ segments = [], size = 168, thickness = 18, formatVa
   const total = segments.reduce((sum, seg) => sum + (Number(seg.value) || 0), 0);
   const radius = (size - thickness) / 2;
   const circumference = 2 * Math.PI * radius;
-  const svg = s("svg", { class: "chart", viewBox: `0 0 ${size} ${size}`, style: `width:${size}px;height:${size}px` });
+  const svg = s("svg", {
+    class: "chart chart--donut",
+    viewBox: `0 0 ${size} ${size}`,
+    style: "width:100%;height:auto;max-width:100%;display:block",
+    role: "img",
+  });
   svg.appendChild(s("circle", {
     cx: size / 2, cy: size / 2, r: radius, fill: "none",
     stroke: "var(--surface-3)", "stroke-width": thickness,
@@ -155,7 +218,7 @@ export function donutChart({ segments = [], size = 168, thickness = 18, formatVa
     x: size / 2, y: size / 2 + 15, "text-anchor": "middle",
     style: "font-size:10px;letter-spacing:.1em;text-transform:uppercase;fill:var(--text-3)",
   }, centerLabel));
-  return svg;
+  return h("div", { class: "donut-host", style: { width: "100%", maxWidth: `${size}px`, margin: "0 auto" } }, svg);
 }
 
 export function barList({ rows = [], formatValue = money, color = "var(--primary)" } = {}) {
@@ -207,7 +270,7 @@ export function sparkline(values = [], { color = "var(--primary)", width = 120, 
     const y = height - ((value - min) / span) * height;
     return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return s("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, style: `width:${width}px;height:${height}px` },
+  return s("svg", { class: "chart", viewBox: `0 0 ${width} ${height}`, style: `width:100%;max-width:${width}px;height:${height}px` },
     s("path", { d: path, fill: "none", stroke: color, "stroke-width": "1.8", "stroke-linecap": "round" }));
 }
 

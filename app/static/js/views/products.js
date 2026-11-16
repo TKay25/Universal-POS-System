@@ -109,7 +109,7 @@ export default async function productsView(ctx) {
             render: (row) => h("div", { class: "flex items-center gap-2" },
               h("div", { class: "module-card__icon", style: { fontSize: "16px" } }, row.emoji || "📦"),
               h("div", { style: { minWidth: 0 } },
-                h("div", { class: "strong truncate" }, row.name, row.is_featured ? h("span", { class: "dim" }, " ★") : null),
+                h("div", { class: "strong truncate" }, row.name, row.is_featured ? h("span", { class: "dim" }, " ", icon("star")) : null),
                 h("div", { class: "tiny dim" }, [row.sku, row.barcode].filter(Boolean).join(" · ") || "No SKU"))),
           },
           {

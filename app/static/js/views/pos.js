@@ -400,7 +400,9 @@ export default async function posView(ctx) {
     const grid = left.querySelector("[data-grid]") || left.querySelector(".pos-grid");
     if (!grid) return;
     const cfg = state.config.pos || {};
-    grid.style.gridTemplateColumns = `repeat(${Number(cfg.grid_columns) || 4}, minmax(0, 1fr))`;
+    const cols = Number(cfg.grid_columns) || 4;
+    const minWidth = cols >= 6 ? 132 : cols === 5 ? 146 : cols === 4 ? 162 : 184;
+    grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${minWidth}px, 1fr))`;
     clear(grid);
     const items = filteredProducts();
     if (!items.length) {
@@ -418,17 +420,17 @@ export default async function posView(ctx) {
         onClick: () => addProduct(product),
       });
       if (cfg.show_images !== false) {
-        tile.appendChild(h("div", { class: "pos-tile__icon" }, productIcon(product.icon || "box")));
+        tile.appendChild(h("span", { class: "pos-tile__icon" }, productIcon(product.icon || "box")));
       }
-      if (product.is_featured) tile.appendChild(h("span", { class: "pos-tile__badge" }, "★"));
-      tile.appendChild(h("div", { class: "pos-tile__name" }, product.name));
-      const foot = h("div", { class: "pos-tile__foot" },
-        h("span", { class: "pos-tile__price" }, money(product.price_cents)));
-      if (cfg.show_stock !== false && product.track_stock) {
-        foot.appendChild(h("span", { class: "pos-tile__stock" },
-          out ? "Out" : `${fmtQty(product.stock_qty)} left`));
-      }
-      tile.appendChild(foot);
+      const body = h("span", { class: "pos-tile__body" },
+        h("span", { class: "pos-tile__name" }, product.name),
+        h("span", { class: "pos-tile__foot" },
+          h("span", { class: "pos-tile__price" }, money(product.price_cents)),
+          cfg.show_stock !== false && product.track_stock
+            ? h("span", { class: "pos-tile__stock" }, out ? "Out" : `${fmtQty(product.stock_qty)} left`)
+            : null));
+      tile.appendChild(body);
+      if (product.is_featured) tile.appendChild(h("span", { class: "pos-tile__badge" }, icon("star")));
       grid.appendChild(tile);
     }
   }
