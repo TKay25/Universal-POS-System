@@ -171,7 +171,7 @@ def test_stock_adjustment_records_a_movement(client, owner, app):
     product_id = create_product(client, headers, stock=4)
     response = client.post(
         f"/api/products/{product_id}/stock",
-        json={"mode": "delta", "qty": 6, "reason": "receive", "note": "Delivery"},
+        json={"mode": "delta", "qty": 6, "reason": "receive", "note": "Delivery", "buying_price": "4.50"},
         headers=headers,
     )
     assert response.status_code == 200, response.get_json()

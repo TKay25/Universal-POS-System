@@ -311,6 +311,7 @@ def _seed_sale(company, *, user, customer, lines, method, when, shift=None,
 
 def _generate_sales(company, users, customers, products, methods, *, days, per_day, seed_value,
                     location=None, register=None):
+    db.session.flush()  # assign ids to freshly seeded users, products and tills
     rng = random.Random(seed_value)
     now = utcnow()
     sellable_methods = [m for m in methods if m.type != "credit"] or methods

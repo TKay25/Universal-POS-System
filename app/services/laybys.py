@@ -247,6 +247,22 @@ def complete_layby(company, user, layby: Layby) -> Sale:
              for item in layby.items if item.product is not None]
     priced = price_cart(company, lines, customer=layby.customer) if lines else None
 
+    # Goods were taken out of stock when the lay-by was opened; this is the
+    # moment they are truly sold, so FIFO layers are consumed now.
+    from app.services import fifo
+
+    fifo_costs: dict[int, int] = {}
+    fifo_total = 0
+    for item in layby.items:
+        if item.product is None:
+            continue
+        if item.product.track_stock:
+            cost = fifo.consume(item.product, float(item.qty))
+        else:
+            cost = int(round(float(item.product.cost_cents or 0) * float(item.qty)))
+        fifo_costs[item.id] = cost
+        fifo_total += cost
+
     sale = Sale(
         company_id=company.id,
         user_id=user.id,
@@ -259,7 +275,7 @@ def complete_layby(company, user, layby: Layby) -> Sale:
         total_cents=layby.total_cents,
         paid_cents=layby.paid_cents,
         change_cents=max(0, (layby.paid_cents or 0) - (layby.total_cents or 0)),
-        cost_cents=sum(int(round((item.product.cost_cents or 0) * item.qty)) for item in layby.items if item.product),
+        cost_cents=fifo_total,
         note=f"Lay-by {layby.number} settled" + (f" · {layby.note}" if layby.note else ""),
         source="layby",
     )
@@ -268,6 +284,9 @@ def complete_layby(company, user, layby: Layby) -> Sale:
     if priced:
         for line in priced["lines"]:
             product = line["product"]
+            matched = next((i for i in layby.items if i.product_id == product.id), None)
+            qty = float(line["qty"]) or 1
+            unit_cost = int(round(fifo_costs.get(matched.id if matched else None, 0) / qty))
             sale.items.append(
                 SaleItem(
                     product_id=product.id,
@@ -280,7 +299,7 @@ def complete_layby(company, user, layby: Layby) -> Sale:
                     tax_cents=line["tax_cents"],
                     line_subtotal_cents=line["line_subtotal_cents"],
                     line_total_cents=line["line_total_cents"],
-                    cost_cents=line["cost_cents"],
+                    cost_cents=unit_cost,
                 )
             )
 

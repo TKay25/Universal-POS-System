@@ -3,13 +3,14 @@
 import { h, clear, debounce } from "../core/dom.js";
 import { icon } from "../core/icons.js";
 import { money, number, qty as fmtQty, date, dateTime, isoDay, addDays } from "../core/fmt.js";
-import { get, post } from "../core/http.js";
+import { get, post, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig, settings } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
   textarea, select, moneyInput, modal, drawer, confirmDialog, emptyState, statCard, statusBadge,
   pagination, kvList, formGrid, switchControl,
 } from "../core/ui.js";
+import { busyOverlay, withButtonSpinner } from "../core/loading.js";
 import { printReceipt } from "./saleDetail.js";
 
 export default async function laybysView(ctx) {
@@ -125,7 +126,7 @@ export default async function laybysView(ctx) {
             key: "actions", label: "", align: "right",
             render: (row) => h("div", { class: "table-actions" },
               row.status === "active"
-                ? iconButton("cash", { size: "sm", variant: "ghost", title: "Take instalment", onClick: () => openPayment(row.id) })
+                ? iconButton("cash", { size: "sm", variant: "ghost", title: "Take instalment", onClick: () => openDetail(row.id) })
                 : null,
               iconButton("print", { size: "sm", variant: "ghost", title: "Statement", onClick: () => printStatement(row.id) }),
               iconButton("chevronRight", { size: "sm", variant: "ghost", title: "Open", onClick: () => openDetail(row.id) })),
@@ -142,6 +143,18 @@ export default async function laybysView(ctx) {
   function printStatement(laybyId) {
     const win = window.open(`/api/laybys/${laybyId}/statement`, "_blank", "width=440,height=800");
     if (!win) toast("Allow pop-ups to print the lay-by statement.", "warning");
+  }
+
+  async function downloadStatement(laybyId, number, trigger) {
+    const overlay = busyOverlay("Building the lay-by statement…");
+    try {
+      await withButtonSpinner(trigger, () => downloadFile(`/laybys/${laybyId}/statement.pdf`));
+      toast(`Statement ${number}.pdf downloaded.`, "success");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      overlay.close();
+    }
   }
 
   function estimate(lines, products) {
@@ -406,6 +419,10 @@ export default async function laybysView(ctx) {
 
     const footer = [
       button("Statement", { icon: "print", onClick: () => printStatement(layby.id) }),
+      button("PDF", {
+        icon: "download",
+        onClick: (event) => downloadStatement(layby.id, layby.number, event.currentTarget),
+      }),
       h("div", { class: "grow" }),
       layby.status === "active"
         ? button("Cancel lay-by", { variant: "ghost", danger: true, onClick: () => openCancel(layby) })

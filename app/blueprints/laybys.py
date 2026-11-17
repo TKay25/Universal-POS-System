@@ -163,3 +163,20 @@ def layby_statement(layby_id: int):
         "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
     )
     return response
+
+
+@bp.get("/<int:layby_id>/statement.pdf")
+@login_required
+@company_required
+@module_required("layby")
+def layby_statement_pdf(layby_id: int):
+    """The same agreement as a branded A4 PDF you can file or email."""
+    from app.services.pdf import render_layby_statement_pdf
+
+    company = current_company()
+    layby = get_scoped(Layby, layby_id, company.id)
+    payload = render_layby_statement_pdf(company=company, layby=layby)
+    response = Response(payload, mimetype="application/pdf")
+    response.headers["Content-Disposition"] = f'attachment; filename="layby-{layby.number}.pdf"'
+    response.headers["Cache-Control"] = "private, max-age=60"
+    return response

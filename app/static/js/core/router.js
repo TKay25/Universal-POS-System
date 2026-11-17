@@ -1,6 +1,7 @@
 /* Hash router that drives the tab manager. */
 
 import { tabs } from "./tabs.js";
+import { routeProgress } from "./loading.js";
 
 export function createRouter({ routes, views, canOpen, onDenied }) {
   let started = false;
@@ -55,12 +56,15 @@ export function createRouter({ routes, views, canOpen, onDenied }) {
     }
 
     let instance;
+    routeProgress.start();
     try {
       instance = await factory({ params, tabId, path: clean, navigate: go });
     } catch (error) {
       console.error("Failed to open view", route.view, error);
       onDenied?.(error?.message || "Could not open that screen.", clean);
       return false;
+    } finally {
+      routeProgress.done();
     }
 
     tab = tabs.add({

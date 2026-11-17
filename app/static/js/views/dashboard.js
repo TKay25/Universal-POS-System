@@ -1,7 +1,7 @@
 /* Dashboard: KPI cards, trend, mixes and recent activity. */
 
 import { h, clear } from "../core/dom.js";
-import { icon } from "../core/icons.js";
+import { icon, productIcon } from "../core/icons.js";
 import { money, number, date, isoDay, addDays, rangeFromPreset } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
 import { settings, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
@@ -210,7 +210,7 @@ export default async function dashboardView(ctx) {
         subtitle: "At or below threshold",
         body: h("div", { class: "list", style: { margin: "-10px -16px" } },
           today.low_stock.slice(0, 6).map((product) => h("div", { class: "list__row" },
-            h("div", { class: "module-card__icon", style: { fontSize: "16px" } }, product.emoji || "📦"),
+            h("div", { class: "module-card__icon product-icon" }, productIcon(product.icon)),
             h("div", { class: "grow", style: { minWidth: 0 } },
               h("div", { class: "truncate strong small" }, product.name),
               h("div", { class: "tiny dim" }, product.sku || "No SKU")),

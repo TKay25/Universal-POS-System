@@ -2,7 +2,7 @@
 
 import { h, clear, mount, $ } from "./core/dom.js";
 import { icon } from "./core/icons.js";
-import { money, dateTime, initials } from "./core/fmt.js";
+import { money, dateTime, initials, timeZone } from "./core/fmt.js";
 import {
   store, applyBranding, getSession, isAuthed, isDeveloper, impersonating, moduleOn,
   hasPerm, hasAny, companyName, currentUser, currentCompany, setTheme,
@@ -29,6 +29,8 @@ import shiftsView from "./views/shifts.js";
 import settingsView from "./views/settings.js";
 import developerView from "./views/developer.js";
 import workspaceView from "./views/workspace.js";
+import activityView from "./views/activity.js";
+import mobileAppView from "./views/mobileApp.js";
 
 const views = {
   dashboard: dashboardView,
@@ -40,6 +42,7 @@ const views = {
   departments: departmentsView,
   laybys: laybysView,
   reports: reportsView,
+  activity: activityView,
   shifts: shiftsView,
   settings: settingsView,
   developer: developerView,
@@ -135,6 +138,15 @@ const routes = [
     perm: "shifts.manage",
   },
   {
+    match: /^\/activity\/?$/,
+    tab: "activity",
+    view: "activity",
+    title: () => "Activity log",
+    icon: "list",
+    perm: "audit.view",
+    deniedMessage: "Only administrators can read the activity log.",
+  },
+  {
     match: /^\/settings(?:\/(?<section>[a-z0-9-]+))?\/?$/,
     tab: "settings",
     view: "settings",
@@ -165,7 +177,129 @@ const routes = [
 
 let router = null;
 let shellEl = null;
+let shellMode = "";
+let mobileInstance = null;
+let sidebarDrawer = null;
+let viewportNarrow = null;
 let appStartTime = Date.now();
+
+/* ------------------------------------------------------------------------- */
+/* Phone shell                                                                */
+/* ------------------------------------------------------------------------- */
+const MOBILE_QUERY = "(max-width: 820px)";
+const FULL_APP_KEY = "pos:full-app";
+const SIDEBAR_KEY = "pos:sidebar";
+
+function sidebarMode() {
+  try {
+    return window.localStorage.getItem(SIDEBAR_KEY) === "expanded" ? "expanded" : "collapsed";
+  } catch {
+    return "collapsed";
+  }
+}
+
+function applySidebarMode(mode) {
+  document.documentElement.dataset.sidebar = mode;
+  try {
+    window.localStorage.setItem(SIDEBAR_KEY, mode);
+  } catch { /* private mode: the choice just does not persist */ }
+  document.querySelectorAll(".topbar__sidebar-toggle").forEach((btn) => {
+    btn.replaceChildren(icon(mode === "collapsed" ? "chevronRight" : "chevronLeft"));
+    btn.title = mode === "collapsed" ? "Expand the sidebar" : "Collapse the sidebar";
+  });
+}
+
+function toggleSidebarMode() {
+  applySidebarMode(document.documentElement.dataset.sidebar === "collapsed" ? "expanded" : "collapsed");
+}
+
+function fullAppPreferred() {
+  try {
+    return window.localStorage.getItem(FULL_APP_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setFullAppPreferred(value) {
+  try {
+    if (value) window.localStorage.setItem(FULL_APP_KEY, "1");
+    else window.localStorage.removeItem(FULL_APP_KEY);
+  } catch { /* private mode: fall through, the shell simply re-renders */ }
+}
+
+function isMobileShell() {
+  if (fullAppPreferred()) return false;
+  // The platform console has no tenant context, so it always uses the full app.
+  if (!currentCompany()) return false;
+  return narrowViewport();
+}
+
+function narrowViewport() {
+  try {
+    return Boolean(window.matchMedia?.(MOBILE_QUERY).matches);
+  } catch {
+    return false;
+  }
+}
+
+function destroyMobile() {
+  if (mobileInstance?.destroy) {
+    try { mobileInstance.destroy(); } catch (error) { console.error("Mobile view cleanup failed", error); }
+  }
+  mobileInstance = null;
+}
+
+function renderMobileShell() {
+  const root = document.getElementById("root");
+  tabs.closeAll();
+  router = null;
+  destroyMobile();
+  clear(root);
+  mobileInstance = mobileAppView({
+    onOpenFullApp: () => { setFullAppPreferred(true); renderShell(); },
+    onOpenTill: () => { setFullAppPreferred(true); renderShell(); router?.go("/pos"); },
+    onSignOut: signOut,
+  });
+  shellEl = mobileInstance.el;
+  shellMode = "mobile";
+  document.documentElement.dataset.shell = "phone";
+  root.appendChild(shellEl);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Header clock                                                               */
+/* ------------------------------------------------------------------------- */
+let clockZone = "";
+let clockTimeFmt = null;
+let clockDateFmt = null;
+let clockTimer = null;
+
+function tickHeaderClock() {
+  if (timeZone() !== clockZone) {
+    clockZone = timeZone();
+    clockTimeFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: clockZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    });
+    clockDateFmt = new Intl.DateTimeFormat("en-GB", {
+      timeZone: clockZone, weekday: "short", day: "2-digit", month: "short", year: "numeric",
+    });
+  }
+  const now = new Date();
+  const time = clockTimeFmt.format(now);
+  const date = clockDateFmt.format(now);
+  document.querySelectorAll(".topbar__clock").forEach((node) => {
+    const timeEl = node.querySelector(".topbar__clock-time");
+    const dateEl = node.querySelector(".topbar__clock-date");
+    if (timeEl) timeEl.textContent = time;
+    if (dateEl) dateEl.textContent = date;
+  });
+}
+
+function startHeaderClock() {
+  tickHeaderClock();
+  if (!clockTimer) clockTimer = setInterval(tickHeaderClock, 1000);
+}
 
 /* ------------------------------------------------------------------------- */
 /* Boot                                                                       */
@@ -187,6 +321,9 @@ async function boot() {
 
 function renderAuth(message = "") {
   const root = document.getElementById("root");
+  destroyMobile();
+  shellEl = null;
+  shellMode = "";
   clear(root);
   root.appendChild(loginView({
     initialError: message,
@@ -250,6 +387,7 @@ function navModel() {
   const ops = [];
   if (moduleOn("reports") && hasPerm("reports.view")) ops.push({ label: "Reports", path: "/reports", icon: "chart" });
   if (moduleOn("shifts") && hasPerm("shifts.manage")) ops.push({ label: "Cash drawer", path: "/shifts", icon: "clock" });
+  if (hasPerm("audit.view")) ops.push({ label: "Activity log", path: "/activity", icon: "list" });
   if (ops.length) groups.push({ label: "Insights", items: ops });
 
   const admin = [];
@@ -263,6 +401,16 @@ function navModel() {
 
 function renderShell() {
   applyBranding();
+  viewportNarrow = narrowViewport();
+  applySidebarMode(sidebarMode());
+  startHeaderClock();
+  if (isMobileShell()) {
+    renderMobileShell();
+    return;
+  }
+  destroyMobile();
+  shellMode = "desktop";
+  document.documentElement.dataset.shell = "full";
   tabs.closeAll();
   const root = document.getElementById("root");
   clear(root);
@@ -277,6 +425,8 @@ function renderShell() {
 
   renderSidebar(sidebar);
   renderTopbar(topbar);
+  tickHeaderClock();
+  sidebarDrawer = wireSidebarDrawer(sidebar);
 
   if (isDeveloper() && !currentCompany()) {
     const target = "#/developer";
@@ -289,6 +439,7 @@ function renderShell() {
     bar: tabbar,
     host: viewsHost,
     onChange: (tab) => {
+      sidebarDrawer?.close();
       updateTopbarTitle(topbar, tab);
       markActiveNav(sidebar, tab);
       if (tab) {
@@ -377,16 +528,52 @@ function renderSidebar(sidebar) {
   sidebar.appendChild(footer);
 }
 
+/* The full app on a phone-sized window gets an off-canvas sidebar instead of a
+   permanently hidden one, otherwise there would be no way to navigate. */
+function wireSidebarDrawer(sidebar) {
+  let backdrop = null;
+  const close = () => {
+    sidebar.classList.remove("is-open");
+    if (backdrop) {
+      backdrop.remove();
+      backdrop = null;
+    }
+  };
+  return {
+    close,
+    toggle() {
+      if (sidebar.classList.contains("is-open")) {
+        close();
+        return;
+      }
+      sidebar.classList.add("is-open");
+      backdrop = h("div", { class: "sidebar-backdrop", onClick: close });
+      shellEl?.appendChild(backdrop);
+    },
+  };
+}
+
 function renderTopbar(topbar) {
   clear(topbar);
   const company = currentCompany();
+  const narrow = narrowViewport();
+
+  if (narrow) {
+    topbar.appendChild(iconButton("menu", {
+      title: "Menu",
+      onClick: () => sidebarDrawer?.toggle(),
+    }));
+  }
 
   const title = h("div", { class: "topbar__title" }, "Dashboard");
   const crumbs = h("div", { class: "topbar__crumbs" },
-    h("span", {}, company?.name || "Universal POS"),
-    icon("chevronRight"),
-    h("span", { class: "topbar__page" }, "Dashboard"));
-  topbar.appendChild(h("div", { style: { minWidth: 0 } }, title, crumbs));
+    icon("building"),
+    h("span", { class: "topbar__company" }, company?.name || "Universal POS"));
+  topbar.appendChild(h("div", { class: "topbar__lead" }, title, crumbs));
+  topbar.appendChild(h("div", {
+    class: "topbar__clock",
+    title: "Zimbabwe time (Africa/Harare)",
+  }, h("span", { class: "topbar__clock-time" }, ""), h("span", { class: "topbar__clock-date" }, "")));
   topbar.appendChild(h("div", { class: "topbar__spacer" }));
 
   const search = h("button", { class: "searchbox", type: "button", onClick: openPalette, title: "Search (Ctrl+K)" },
@@ -414,6 +601,14 @@ function renderTopbar(topbar) {
 
   if (hasPerm("pos.sell") && currentCompany()) {
     topbar.appendChild(button("New sale", { variant: "primary", size: "sm", icon: "plus", onClick: () => router?.go("/pos") }));
+  }
+  if (!narrow) {
+    const collapse = iconButton(sidebarMode() === "collapsed" ? "chevronRight" : "chevronLeft", {
+      title: sidebarMode() === "collapsed" ? "Expand the sidebar" : "Collapse the sidebar",
+      onClick: toggleSidebarMode,
+    });
+    collapse.classList.add("topbar__sidebar-toggle");
+    topbar.appendChild(collapse);
   }
   const user = currentUser();
   topbar.appendChild(iconButton("more", { title: "Account", onClick: (e) => openUserMenu(e.currentTarget) }));
@@ -496,6 +691,10 @@ function openUserMenu(anchor) {
     items.push("-");
     items.push({ label: impersonating() ? "Leave workspace" : "Developer console", icon: "shield",
       onClick: () => (impersonating() ? leaveToConsole() : router?.go("/developer")) });
+  }
+  if (narrowViewport()) {
+    items.push("-");
+    items.push({ label: "Phone dashboard", icon: "grid", onClick: () => { setFullAppPreferred(false); renderShell(); } });
   }
   items.push("-");
   items.push({ label: "Sign out", icon: "logout", danger: true, onClick: signOut });
@@ -687,12 +886,30 @@ export function remountShell() {
 window.addEventListener("pos:branding-changed", () => {
   if (!shellEl) return;
   applyBranding();
+  if (shellMode === "mobile") {
+    renderShell();
+    return;
+  }
   const sidebar = shellEl.querySelector(".sidebar");
   const topbar = shellEl.querySelector(".topbar");
   if (sidebar) renderSidebar(sidebar);
   if (topbar) renderTopbar(topbar);
   markActiveNav(sidebar, tabs.current());
 });
+
+/* Crossing the phone breakpoint swaps the shell; the choice only applies once. */
+(function watchViewport() {
+  if (!window.matchMedia) return;
+  const query = window.matchMedia(MOBILE_QUERY);
+  const onChange = () => {
+    if (!isAuthed()) return;
+    const narrow = narrowViewport();
+    const wanted = isMobileShell() ? "mobile" : "desktop";
+    if (wanted !== shellMode || narrow !== viewportNarrow) renderShell();
+  };
+  if (query.addEventListener) query.addEventListener("change", onChange);
+  else if (query.addListener) query.addListener(onChange);
+})();
 
 window.addEventListener("DOMContentLoaded", boot);
 window.posApp = { remountShell, store };

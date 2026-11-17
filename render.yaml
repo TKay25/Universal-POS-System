@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: universal-pos
+    runtime: python
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn --workers 3 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT "app:create_app()"
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: POS_SECRET_KEY
+        generateValue: true
+      - key: POS_DATABASE_URL
+        sync: false
+      - key: POS_REPORT_CACHE_SECONDS
+        value: "60"
+      - key: POS_DB_PRE_PING
+        value: "true"
+      - key: POS_SEED_DEMO
+        value: "true"

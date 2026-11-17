@@ -21,6 +21,7 @@ from app.models import (
     StockMovement,
 )
 from app.security import bad_request
+from app.services import fifo
 from app.services.pricing import price_cart
 from app.utils import to_cents, utcnow
 
@@ -205,8 +206,17 @@ def complete_sale(company, user, payload: dict) -> Sale:
     )
     db.session.add(sale)
 
+    fifo_cost_total = 0
     for line in priced["lines"]:
         product: Product = line["product"]
+        unit_cost = int(line["cost_cents"] or 0)
+        if product.track_stock:
+            # FIFO: goods leave at the buying price of the oldest layers first.
+            line_cost = fifo.consume(product, float(line["qty"]))
+            fifo_cost_total += line_cost
+            unit_cost = int(round(line_cost / float(line["qty"]))) if line["qty"] else unit_cost
+        else:
+            fifo_cost_total += int(round(unit_cost * float(line["qty"])))
         sale.items.append(
             SaleItem(
                 product_id=product.id,
@@ -219,7 +229,7 @@ def complete_sale(company, user, payload: dict) -> Sale:
                 tax_cents=line["tax_cents"],
                 line_subtotal_cents=line["line_subtotal_cents"],
                 line_total_cents=line["line_total_cents"],
-                cost_cents=line["cost_cents"],
+                cost_cents=unit_cost,
                 note=line["note"],
             )
         )
@@ -236,6 +246,7 @@ def complete_sale(company, user, payload: dict) -> Sale:
                     reference=sale.number,
                 )
             )
+    sale.cost_cents = fifo_cost_total
 
     for payment in payments:
         sale.payments.append(payment)
@@ -276,6 +287,7 @@ def void_sale(company, user, sale: Sale, reason: str = "") -> Sale:
                 restock = float(item.qty) - float(item.refunded_qty or 0)
                 if restock > 0:
                     product.stock_qty = round((product.stock_qty or 0) + restock, 3)
+                    fifo.restore(product, restock, int(item.cost_cents or 0), reference=sale.number)
                     db.session.add(
                         StockMovement(
                             company_id=company.id,
@@ -382,6 +394,7 @@ def refund_sale(company, user, sale: Sale, payload: dict) -> Refund:
         if restock and sale_item.product and sale_item.product.track_stock:
             product = sale_item.product
             product.stock_qty = round((product.stock_qty or 0) + float(item.qty), 3)
+            fifo.restore(product, float(item.qty), int(sale_item.cost_cents or 0), reference=sale.number)
             db.session.add(
                 StockMovement(
                     company_id=company.id,

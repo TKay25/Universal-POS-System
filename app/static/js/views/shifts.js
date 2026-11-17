@@ -1,12 +1,12 @@
 /* Cash drawer sessions and reconciliation. */
 
-import { h, clear } from "../core/dom.js";
+import { h, clear, debounce } from "../core/dom.js";
 import { icon } from "../core/icons.js";
 import { money, number, dateTime, date } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
 import {
   pageHeader, sectionCard, button, table, badge, toast, alertBox, field, textarea, moneyInput,
-  statCard, modal, statusBadge, pagination, emptyState, kvList,
+  statCard, modal, statusBadge, pagination, emptyState, kvList, textInput,
 } from "../core/ui.js";
 
 export default async function shiftsView(ctx) {
@@ -14,15 +14,23 @@ export default async function shiftsView(ctx) {
   let current = null;
   let summary = {};
   let page = 1;
+  const state = { search: "" };
 
   const currentHost = h("div");
   const historyHost = h("div");
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
+  const searchInput = textInput({ placeholder: "Search cashier or till…", className: "input--sm" });
+  searchInput.addEventListener("input", debounce(() => {
+    state.search = searchInput.value.trim();
+    page = 1;
+    load();
+  }, 260));
 
   el.appendChild(pageHeader({
     title: "Cash drawer",
     subtitle: "Open, reconcile and close every shift",
     actions: [
+      searchInput,
       button("Open drawer", { variant: "primary", icon: "plus", onClick: openOpenModal }),
       button("Close drawer", { icon: "check", onClick: openCloseModal }),
     ],
@@ -36,7 +44,7 @@ export default async function shiftsView(ctx) {
     try {
       const [currentData, history] = await Promise.all([
         get("/shifts/current"),
-        get("/shifts", { page, per_page: 25 }),
+        get("/shifts", { page, per_page: 25, q: state.search || undefined }),
       ]);
       current = currentData.item;
       summary = currentData.summary || {};
@@ -45,7 +53,9 @@ export default async function shiftsView(ctx) {
       clear(historyHost);
       historyHost.appendChild(table({
         rows: history.items || [],
-        empty: { icon: "clock", title: "No shifts yet", text: "Open the drawer to start your first shift." },
+        empty: state.search
+          ? { icon: "search", title: "Nothing matched", text: `No shifts match “${state.search}”.` }
+          : { icon: "clock", title: "No shifts yet", text: "Open the drawer to start your first shift." },
         columns: [
           { key: "user", label: "Cashier", render: (row) => h("div", {}, h("div", { class: "strong" }, row.user), h("div", { class: "tiny dim" }, row.register || "—")) },
           { key: "opened_at", label: "Opened", render: (row) => dateTime(row.opened_at) },

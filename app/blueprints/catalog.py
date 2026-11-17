@@ -33,7 +33,7 @@ from app.security import (
     not_found,
     permission_required,
 )
-from app.utils import csv_response, paginate, search_arg, to_cents, utcnow, validate
+from app.utils import csv_response, paginate, parse_date, search_arg, to_cents, utcnow, validate
 
 bp = Blueprint("catalog", __name__, url_prefix="/api")
 
@@ -273,9 +273,21 @@ def list_products():
         query = query.filter(Product.is_active.is_(True))
 
     items, meta = paginate(query.order_by(Product.name), default_per_page=50)
+    from app.services import fifo
+
+    values = fifo.value_map(company.id, [p.id for p in items])
+    payload = []
+    for product in items:
+        data = product.to_dict()
+        # FIFO value first; fall back to the buying price until layers exist.
+        data["stock_value_cents"] = values.get(
+            product.id,
+            int(round(float(product.stock_qty or 0) * int(product.cost_cents or 0))),
+        )
+        payload.append(data)
     return jsonify(
         {
-            "items": [p.to_dict() for p in items],
+            "items": payload,
             "meta": meta,
             "custom_fields": [f.to_dict() for f in _custom_field_map(company, "product").values()],
         }
@@ -379,6 +391,12 @@ def create_product():
     db.session.add(product)
     db.session.flush()
     if product.stock_qty:
+        from app.services import fifo
+
+        fifo.open_layer(
+            product, product.stock_qty, int(product.cost_cents or 0),
+            source="opening", reference="initial stock",
+        )
         db.session.add(
             StockMovement(
                 company_id=company.id,
@@ -408,7 +426,14 @@ def get_product(product_id: int):
         .limit(50)
         .all()
     )
-    return jsonify({"item": product.to_dict(), "movements": [m.to_dict() for m in movements]})
+    from app.services import fifo
+
+    data = product.to_dict()
+    value = fifo.value_map(company.id, [product.id]).get(product.id)
+    data["stock_value_cents"] = value if value is not None else int(
+        round(float(product.stock_qty or 0) * int(product.cost_cents or 0))
+    )
+    return jsonify({"item": data, "movements": [m.to_dict() for m in movements]})
 
 
 @bp.patch("/products/<int:product_id>")
@@ -509,6 +534,25 @@ def adjust_stock(product_id: int):
     if after < 0:
         raise bad_request("Stock cannot go below zero. Receive more stock instead.", {"qty": "Would be negative."})
 
+    # Every addition needs a buying price so FIFO can value it correctly.
+    buying_price = payload.get("buying_price")
+    if delta > 0 and buying_price is None and product.track_stock:
+        raise bad_request(
+            "Tell us the buying price for this stock — FIFO costing needs it.",
+            {"buying_price": "Buying price is required when adding stock."},
+        )
+
+    if product.track_stock:
+        from app.services import fifo
+
+        if delta > 0:
+            fifo.receive(
+                product, delta, int(buying_price),
+                source=payload["reason"], reference=payload["reference"],
+            )
+        elif delta < 0:
+            fifo.consume(product, abs(delta))
+
     product.stock_qty = round(after, 3)
     if payload.get("buying_price") is not None:
         product.cost_cents = int(payload["buying_price"])
@@ -543,6 +587,24 @@ def stock_movements():
     product_id = request.args.get("product_id", type=int)
     if product_id:
         query = query.filter(StockMovement.product_id == product_id)
+    term = search_arg()
+    if term:
+        like = f"%{term}%"
+        query = query.join(Product, Product.id == StockMovement.product_id).filter(
+            db.or_(
+                Product.name.ilike(like),
+                Product.sku.ilike(like),
+                StockMovement.reference.ilike(like),
+                StockMovement.reason.ilike(like),
+            )
+        )
+    start_day = parse_date(request.args.get("from"))
+    end_day = parse_date(request.args.get("to"))
+    if start_day or end_day:
+        from app.services.timezones import local_range_bounds
+
+        start_utc, end_utc = local_range_bounds(start_day or end_day, end_day or start_day, company)
+        query = query.filter(StockMovement.created_at >= start_utc, StockMovement.created_at <= end_utc)
     items, meta = paginate(query.order_by(StockMovement.created_at.desc()), default_per_page=50)
     return jsonify({"items": [m.to_dict() for m in items], "meta": meta})
 
@@ -820,6 +882,12 @@ def inventory_import():
             db.session.flush()
             summary["created"] += 1
             if opening_stock:
+                from app.services import fifo
+
+                fifo.open_layer(
+                    product, opening_stock, int(product.cost_cents or 0),
+                    source="opening", reference="bulk import",
+                )
                 db.session.add(
                     StockMovement(
                         company_id=company.id,
@@ -859,6 +927,15 @@ def inventory_import():
             if opening_stock is not None:
                 delta = round(opening_stock - float(product.stock_qty or 0), 3)
                 if delta:
+                    from app.services import fifo
+
+                    if delta > 0:
+                        fifo.receive(
+                            product, delta, int(product.cost_cents or 0),
+                            source="import", reference="bulk import",
+                        )
+                    else:
+                        fifo.consume(product, abs(delta))
                     product.stock_qty = opening_stock
                     db.session.add(
                         StockMovement(
@@ -935,6 +1012,15 @@ def inventory_count():
             }
         )
         if apply_changes:
+            from app.services import fifo
+
+            if variance > 0:
+                fifo.receive(
+                    product, variance, int(product.cost_cents or 0),
+                    source="count", reference="stock count",
+                )
+            else:
+                fifo.consume(product, abs(variance))
             product.stock_qty = counted
             db.session.add(
                 StockMovement(

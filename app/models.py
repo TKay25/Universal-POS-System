@@ -567,6 +567,44 @@ class StockMovement(db.Model):
         }
 
 
+class StockLayer(db.Model):
+    """One FIFO cost layer: stock received at a known buying price.
+
+    Sales consume the oldest layers first, so cost of goods sold (and therefore
+    profit) reflects what the goods actually cost when they were bought.
+    """
+
+    __tablename__ = "stock_layers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(
+        db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    product_id = db.Column(
+        db.Integer, db.ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    received_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+    qty_received = db.Column(db.Float, default=0.0, nullable=False)
+    qty_remaining = db.Column(db.Float, default=0.0, nullable=False)
+    unit_cost_cents = db.Column(db.Integer, default=0, nullable=False)
+    source = db.Column(db.String(30), default="receive", nullable=False)
+    reference = db.Column(db.String(80), default="")
+
+    product = db.relationship("Product")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "product_id": self.product_id,
+            "received_at": iso(self.received_at),
+            "qty_received": round(self.qty_received or 0, 3),
+            "qty_remaining": round(self.qty_remaining or 0, 3),
+            "unit_cost_cents": int(self.unit_cost_cents or 0),
+            "source": self.source,
+            "reference": self.reference,
+        }
+
+
 class Supplier(TimestampMixin, db.Model):
     __tablename__ = "suppliers"
 
@@ -755,6 +793,8 @@ class Sale(db.Model):
             "paid_cents": self.paid_cents,
             "change_cents": self.change_cents,
             "refunded_cents": self.refunded_cents,
+            "cost_cents": self.cost_cents,
+            "profit_cents": (self.total_cents or 0) - (self.refunded_cents or 0) - (self.cost_cents or 0),
             "note": self.note,
             "discount_label": self.discount_label,
             "loyalty_points_earned": self.loyalty_points_earned,

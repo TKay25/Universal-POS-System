@@ -17,14 +17,22 @@ export default async function departmentsView(ctx) {
   const el = h("div");
   let departments = [];
   let categories = [];
+  let term = "";
 
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
   const cardsHost = h("div", { class: "grid grid--3" });
+
+  const searchInput = textInput({ placeholder: "Search departments or categories…", className: "input--sm" });
+  searchInput.addEventListener("input", () => {
+    term = searchInput.value.trim().toLowerCase();
+    renderCards();
+  });
 
   el.appendChild(pageHeader({
     title: "Departments",
     subtitle: "Group categories into the departments your staff think in — Hardware, Kitchenware, Electronics and more",
     actions: [
+      searchInput,
       button("Categories", { icon: "tag", onClick: openCategories }),
       hasPerm("products.manage")
         ? button("Add department", { variant: "primary", icon: "plus", onClick: () => openDepartmentForm() })
@@ -83,9 +91,28 @@ export default async function departmentsView(ctx) {
       }));
       return;
     }
-    for (const department of departments) {
+    const visible = term
+      ? departments.filter((department) => (
+        department.name.toLowerCase().includes(term)
+        || (department.description || "").toLowerCase().includes(term)
+        || department.categories.some((category) => category.name.toLowerCase().includes(term))
+      ))
+      : departments;
+    if (!visible.length) {
+      cardsHost.appendChild(emptyState({
+        icon: "search",
+        title: "Nothing matched",
+        text: `No department or category matches “${searchInput.value.trim()}”.`,
+        action: button("Clear search", { onClick: () => { searchInput.value = ""; term = ""; renderCards(); } }),
+      }));
+      return;
+    }
+    for (const department of visible) {
       const categoryChips = h("div", { class: "chips mt-2" });
-      for (const category of department.categories) {
+      const listed = term
+        ? department.categories.filter((category) => category.name.toLowerCase().includes(term))
+        : department.categories;
+      for (const category of listed) {
         categoryChips.appendChild(h("button", {
           class: "chip",
           type: "button",

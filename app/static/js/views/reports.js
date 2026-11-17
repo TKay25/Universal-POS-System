@@ -10,8 +10,28 @@ import {
   field, textInput, select,
 } from "../core/ui.js";
 import { areaChart, donutChart, barList, legend, heatStrip } from "../core/charts.js";
+import { withButtonSpinner, busyOverlay } from "../core/loading.js";
 
 const PALETTE = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9", "#f97316"];
+
+const REPORT_ICONS = {
+  summary: "trend",
+  sales: "receipt",
+  products: "box",
+  categories: "tag",
+  payments: "card",
+  tax: "percent",
+  cashiers: "users",
+  inventory: "layers",
+  low_stock: "warn",
+  stock_movements: "refresh",
+  customers: "users",
+  refunds: "rotate",
+  shifts: "clock",
+  laybys: "calendar",
+  branches: "map",
+  suppliers: "truck",
+};
 
 export default async function reportsView(ctx) {
   const el = h("div");
@@ -48,30 +68,32 @@ export default async function reportsView(ctx) {
     title: "Reports",
     subtitle: "Numbers you can reconcile and file",
     actions: [
-      button("Export CSV", { icon: "download", onClick: exportCurrent }),
-      button("Refresh", { icon: "refresh", variant: "ghost", onClick: load }),
+      button("PDF", { icon: "download", variant: "primary", onClick: (event) => exportPdf(event.currentTarget) }),
+      button("CSV", { icon: "download", onClick: (event) => exportCurrent(event.currentTarget) }),
+      button("Refresh", { icon: "refresh", variant: "ghost", onClick: (event) => withButtonSpinner(event.currentTarget, load) }),
     ],
   }));
 
-  el.appendChild(h("div", { class: "flex gap-2 items-center wrap mb-4" },
-    presets,
-    h("div", { class: "flex gap-2 items-center", style: { marginLeft: "auto" } },
+  el.appendChild(h("div", { class: "report-toolbar" },
+    h("div", { class: "report-toolbar__group" }, presets),
+    h("div", { class: "report-toolbar__group report-toolbar__group--end" },
       branchHost,
-      h("span", { class: "tiny dim" }, "From"), fromInput,
-      h("span", { class: "tiny dim" }, "To"), toInput)));
+      h("span", { class: "report-toolbar__label" }, "From"), fromInput,
+      h("span", { class: "report-toolbar__label" }, "To"), toInput)));
+  tabsHost.className = "report-tabs";
   el.appendChild(tabsHost);
   el.appendChild(content);
 
   function renderTabs() {
     clear(tabsHost);
-    const entries = [{ key: "summary", name: "Summary", icon: "trend" }, ...registry.map((report) => ({ ...report, icon: "chart" }))];
+    const entries = [{ key: "summary", name: "Summary" }, ...registry.map((report) => ({ ...report }))];
     for (const entry of entries) {
       tabsHost.appendChild(h("button", {
-        class: `chip${state.key === entry.key ? " is-active" : ""}`,
+        class: `report-tab${state.key === entry.key ? " is-active" : ""}`,
         type: "button",
         title: entry.description || entry.name,
         onClick: () => { state.key = entry.key; renderTabs(); load(); },
-      }, icon(entry.icon), entry.name));
+      }, icon(REPORT_ICONS[entry.key] || "chart"), h("span", {}, entry.name)));
     }
   }
 
@@ -117,19 +139,30 @@ export default async function reportsView(ctx) {
     const data = await get("/reports/overview", params);
     clear(content);
     const cards = data.cards || {};
+    const salesCents = Number(cards.sales_cents || 0);
+    const profitCents = Number(cards.gross_profit_cents || 0);
+    const margin = salesCents ? (profitCents / salesCents) * 100 : 0;
     content.appendChild(h("div", { class: "grid grid--kpi mb-4" },
       statCard({ label: "Net sales", value: money(cards.sales_cents), icon: "cash", foot: `${number(cards.transactions)} transactions` }),
       statCard({ label: "Average ticket", value: money(cards.average_ticket_cents), icon: "trend", foot: `${number(cards.items_sold, 1)} items sold`, tone: "accent" }),
-      statCard({ label: "Gross profit", value: money(cards.gross_profit_cents), icon: "chart", foot: `Cost ${money(cards.cost_cents)}`, tone: "success" }),
+      statCard({ label: "Gross profit", value: money(cards.gross_profit_cents), icon: "chart", foot: `${margin.toFixed(1)}% margin · cost ${money(cards.cost_cents)}`, tone: profitCents >= 0 ? "success" : "danger" }),
       statCard({ label: "Tax collected", value: money(cards.tax_cents), icon: "percent", foot: `${money(cards.discount_cents)} discounts · ${money(cards.refunded_cents)} refunds`, tone: "warning" })));
 
+    const series = data.series || [];
     const grid = h("div", { class: "grid grid--dash" });
     grid.appendChild(h("div", { class: "span-8" }, sectionCard({
-      title: "Sales trend",
+      title: "Revenue and profit",
       subtitle: `${date(state.from)} → ${date(state.to)}`,
+      actions: legend([
+        { label: "Revenue", color: PALETTE[0] },
+        { label: "Profit", color: PALETTE[3] },
+      ]),
       body: areaChart({
-        points: (data.series || []).map((row) => row.sales_cents / 100),
-        labels: (data.series || []).map((row) => date(row.date, { year: false })),
+        series: [
+          { name: "Revenue", color: PALETTE[0], values: series.map((row) => (row.sales_cents || 0) / 100) },
+          { name: "Profit", color: PALETTE[3], values: series.map((row) => (row.profit_cents || 0) / 100) },
+        ],
+        labels: series.map((row) => date(row.date, { year: false })),
         height: 280,
         formatValue: (value) => money(Math.round(value * 100)),
       }),
@@ -155,6 +188,63 @@ export default async function reportsView(ctx) {
         heatStrip((data.hourly || []).map((row) => row.transactions)),
         h("div", { class: "flex justify-between tiny dim" }, h("span", {}, "00:00"), h("span", {}, "12:00"), h("span", {}, "23:00"))),
     })));
+    const branches = data.branches || [];
+    if (branches.length) {
+      const top = Math.max(...branches.map((row) => row.sales_cents), 1);
+      grid.appendChild(h("div", { class: "span-6" }, sectionCard({
+        title: "By branch",
+        subtitle: `${branches.length} branch${branches.length === 1 ? "" : "es"} in this period`,
+        flush: true,
+        body: table({
+          rows: branches,
+          columns: [
+            { key: "name", label: "Branch", render: (row) => h("div", {},
+              h("div", { class: "strong" }, row.name),
+              h("div", { class: "tiny dim" }, `${number(row.transactions)} sales`)) },
+            {
+              key: "share",
+              label: "Share",
+              render: (row) => h("div", { class: "flex items-center gap-2" },
+                h("div", { class: "bar-row__track grow", style: { height: "6px" } },
+                  h("div", { class: "bar-row__fill", style: { width: `${Math.max(3, Math.round((row.sales_cents / top) * 100))}%` } })),
+                h("span", { class: "tiny dim num" }, `${Math.round((row.sales_cents / Math.max(1, cards.sales_cents)) * 100)}%`)),
+            },
+            { key: "sales_cents", label: "Revenue", align: "right", render: (row) => h("span", { class: "num strong" }, money(row.sales_cents)) },
+            { key: "profit_cents", label: "Profit", align: "right", render: (row) => h("span", { class: "num" }, money(row.profit_cents)) },
+          ],
+        }),
+      })));
+    }
+
+    const departments = data.department_mix || [];
+    if (departments.length) {
+      const top = Math.max(...departments.map((row) => row.revenue_cents), 1);
+      grid.appendChild(h("div", { class: "span-6" }, sectionCard({
+        title: "By department",
+        subtitle: `${departments.length} department${departments.length === 1 ? "" : "s"} in this period`,
+        flush: true,
+        body: table({
+          rows: departments,
+          columns: [
+            { key: "name", label: "Department", render: (row) => h("div", { class: "flex items-center gap-2" },
+              h("span", { class: "chip__dot", style: { background: row.color || "var(--primary)" } }),
+              h("div", {},
+                h("div", { class: "strong" }, row.name),
+                h("div", { class: "tiny dim" }, `${number(row.qty)} units`))) },
+            {
+              key: "share",
+              label: "Share",
+              render: (row) => h("div", { class: "flex items-center gap-2" },
+                h("div", { class: "bar-row__track grow", style: { height: "6px" } },
+                  h("div", { class: "bar-row__fill", style: { width: `${Math.max(3, Math.round((row.revenue_cents / top) * 100))}%`, background: row.color || "var(--primary)" } })),
+                h("span", { class: "tiny dim num" }, `${Math.round((row.revenue_cents / Math.max(1, cards.sales_cents)) * 100)}%`)),
+            },
+            { key: "revenue_cents", label: "Revenue", align: "right", render: (row) => h("span", { class: "num strong" }, money(row.revenue_cents)) },
+            { key: "profit_cents", label: "Profit", align: "right", render: (row) => h("span", { class: "num" }, money(row.profit_cents)) },
+          ],
+        }),
+      })));
+    }
     content.appendChild(grid);
   }
 
@@ -172,7 +262,9 @@ export default async function reportsView(ctx) {
       title: data.name,
       subtitle: `${data.description} · ${data.rows.length} rows`,
       flush: true,
-      actions: button("Export CSV", { size: "sm", icon: "download", onClick: exportCurrent }),
+      actions: h("div", { class: "flex gap-2" },
+        button("CSV", { size: "sm", icon: "download", onClick: (event) => exportCurrent(event.currentTarget) }),
+        button("PDF", { size: "sm", variant: "soft", icon: "download", onClick: (event) => exportPdf(event.currentTarget) })),
       body: table({
         rows: data.rows.map((row) => {
           const object = {};
@@ -198,17 +290,46 @@ export default async function reportsView(ctx) {
     return String(value);
   }
 
-  async function exportCurrent() {
+  async function exportCurrent(trigger) {
     if (!hasPerm("reports.export")) {
       toast("You need the export permission.", "warning");
       return;
     }
-    try {
+    const run = async () => {
       const key = state.key === "summary" ? "sales" : state.key;
-      await downloadFile(`/reports/${key}.csv`, { from: state.from, to: state.to });
-      toast("Report exported.", "success");
+      const query = { from: state.from, to: state.to };
+      if (state.locationId) query.location_id = state.locationId;
+      await downloadFile(`/reports/${key}.csv`, query);
+      toast("CSV downloaded.", "success");
+    };
+    try {
+      if (trigger) await withButtonSpinner(trigger, run);
+      else await run();
     } catch (error) {
       toast(error.message, "error");
+    }
+  }
+
+  async function exportPdf(trigger) {
+    if (!hasPerm("reports.export")) {
+      toast("You need the export permission.", "warning");
+      return;
+    }
+    const key = state.key === "summary" ? "summary" : state.key;
+    const query = { from: state.from, to: state.to };
+    if (state.locationId) query.location_id = state.locationId;
+    const overlay = busyOverlay("Building your PDF…");
+    const started = performance.now();
+    try {
+      const run = () => downloadFile(`/reports/${key}.pdf`, query);
+      if (trigger) await withButtonSpinner(trigger, run);
+      else await run();
+      const ms = Math.round(performance.now() - started);
+      toast(`PDF ready in ${ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`}.`, "success");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      overlay.close();
     }
   }
 

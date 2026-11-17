@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
+from sqlalchemy.exc import OperationalError
 from werkzeug.exceptions import HTTPException
 
 from app.config import Config
@@ -18,6 +20,15 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     app.config.from_object(config_object)
     app.config.update(overrides)
 
+    # SQLite engines (tests, local demos) reject server-side pool arguments.
+    if str(app.config.get("SQLALCHEMY_DATABASE_URI", "")).startswith("sqlite"):
+        options = {
+            key: value
+            for key, value in (app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {}).items()
+            if key not in {"pool_size", "max_overflow", "pool_recycle", "pool_timeout"}
+        }
+        app.config["SQLALCHEMY_ENGINE_OPTIONS"] = options
+
     instance_path = Path(app.instance_path)
     instance_path.mkdir(parents=True, exist_ok=True)
     if app.config["SQLALCHEMY_DATABASE_URI"].startswith("sqlite:///"):
@@ -27,6 +38,7 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     db.init_app(app)
 
     from app.blueprints.auth import bp as auth_bp
+    from app.blueprints.activity import bp as activity_bp
     from app.blueprints.catalog import bp as catalog_bp
     from app.blueprints.company import bp as company_bp
     from app.blueprints.developer import bp as developer_bp
@@ -36,7 +48,8 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     from app.blueprints.workspaces import bp as workspaces_bp
 
     for blueprint in (
-        auth_bp, company_bp, catalog_bp, sales_bp, laybys_bp, reports_bp, developer_bp, workspaces_bp
+        auth_bp, activity_bp, company_bp, catalog_bp, sales_bp, laybys_bp, reports_bp, developer_bp,
+        workspaces_bp
     ):
         app.register_blueprint(blueprint)
 
@@ -145,11 +158,36 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
         created = seed_all(app)
         print(created)
 
-    with app.app_context():
-        db.create_all()
-        if app.config.get("SEED_DEMO_DATA") and not app.config.get("TESTING"):
-            from app.seed import seed_all
+    def _bootstrap():
+        """Create the schema (and demo data) tolerating a slow/transient database."""
+        last_error = None
+        for attempt in range(4):
+            try:
+                db.create_all()
+                if app.config.get("SEED_DEMO_DATA") and not app.config.get("TESTING"):
+                    from app.seed import seed_all
 
-            seed_all(app)
+                    seed_all(app)
+                if not app.config.get("TESTING"):
+                    # Give pre-existing stock its first FIFO cost layer.
+                    from app.models import Company
+                    from app.services import fifo
+
+                    for company in Company.query.all():
+                        try:
+                            fifo.backfill_company(company.id)
+                        except Exception as error:  # pragma: no cover - data issues
+                            app.logger.warning("FIFO backfill failed for company %s: %s", company.id, error)
+                            db.session.rollback()
+                return
+            except OperationalError as error:  # pragma: no cover - network/db startup
+                last_error = error
+                app.logger.warning("Database not ready (attempt %s/4): %s", attempt + 1, error)
+                db.session.rollback()
+                time.sleep(2 * (attempt + 1))
+        raise last_error
+
+    with app.app_context():
+        _bootstrap()
 
     return app

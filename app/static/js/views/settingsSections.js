@@ -512,7 +512,7 @@ SECTION_RENDERERS.pos = async (host) => {
   const cfg = moduleConfig("pos");
   const grid = textInput({ type: "number", min: "2", max: "8", value: String(cfg.grid_columns ?? 4) });
   const quickCash = tagInput({ values: cfg.quick_cash || [], placeholder: "Amount in cents" });
-  const showImages = switchControl({ checked: cfg.show_images !== false, label: "Show product emoji/images" });
+  const showImages = switchControl({ checked: cfg.show_images !== false, label: "Show product icons on tiles" });
   const showStock = switchControl({ checked: cfg.show_stock !== false, label: "Show stock counts on tiles" });
   const autoPrint = switchControl({ checked: Boolean(cfg.auto_print), label: "Print receipts automatically" });
   const sound = switchControl({ checked: cfg.sound_enabled !== false, label: "Play a sound when adding items" });

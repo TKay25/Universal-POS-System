@@ -276,6 +276,9 @@ export default async function posView(ctx) {
   function renderLeft() {
     clear(left);
     const cfg = state.config.pos || {};
+    const branchLabel = state.locations.length > 1
+      ? (state.locations.find((row) => row.id === state.locationId)?.name || "Branch")
+      : (state.locations[0]?.name || "");
     const searchInput = h("input", {
       class: "input",
       placeholder: "Search products or scan a barcode…",
@@ -303,14 +306,12 @@ export default async function posView(ctx) {
 
     left.appendChild(h("div", { class: "pos__toolbar" },
       h("div", { class: "pos__search" }, icon("search"), searchInput),
-      state.locations.length > 1
-        ? h("button", {
-          class: "btn btn--sm",
-          type: "button",
-          title: "Switch branch",
-          onClick: (e) => openBranchMenu(e.currentTarget),
-        }, icon("map"), h("span", {}, state.locations.find((row) => row.id === state.locationId)?.name || "Branch"))
-        : null,
+      branchLabel ? h("button", {
+        class: "btn btn--sm",
+        type: "button",
+        title: "Switch branch",
+        onClick: (e) => openBranchMenu(e.currentTarget),
+      }, icon("map"), h("span", {}, branchLabel)) : null,
       h("div", { class: "flex gap-2" },
         state.holds.length
           ? button(`Held (${state.holds.length})`, { size: "sm", icon: "pause", onClick: openHolds })
@@ -327,50 +328,47 @@ export default async function posView(ctx) {
           ? iconButton("user", { title: "Switch cashier", onClick: (e) => openStaffMenu(e.currentTarget) })
           : null)));
 
-    if (state.departments.length > 1) {
-      const deptRow = h("div", { class: "pos__cats", style: { paddingBottom: "0" } });
-      deptRow.appendChild(h("button", {
-        class: `chip${state.departmentId == null ? " is-active" : ""}`,
-        type: "button",
-        onClick: () => {
-          state.departmentId = null;
-          state.categoryId = null;
-          renderGrid();
-          renderLeft();
-        },
-      }, icon("layers"), "All departments"));
-      for (const department of state.departments) {
-        deptRow.appendChild(h("button", {
-          class: `chip${state.departmentId === department.id ? " is-active" : ""}`,
-          type: "button",
-          onClick: () => {
-            state.departmentId = department.id;
-            state.categoryId = null;
-            renderGrid();
-            renderLeft();
-          },
-        }, h("span", { class: "chip__dot", style: { background: department.color } }), department.name));
-      }
-      left.appendChild(deptRow);
-    }
-
-    const cats = h("div", { class: "pos__cats" });
-    cats.appendChild(h("button", {
-      class: `chip${state.categoryId == null ? " is-active" : ""}`,
-      type: "button",
-      onClick: () => { state.categoryId = null; renderGrid(); renderLeft(); },
-    }, h("span", { class: "chip__dot", style: { background: "var(--primary)" } }), "All items"));
     const visibleCategories = state.departmentId
       ? state.categories.filter((category) => category.department_id === state.departmentId)
       : state.categories;
-    for (const category of visibleCategories) {
-      cats.appendChild(h("button", {
-        class: `chip${state.categoryId === category.id ? " is-active" : ""}`,
-        type: "button",
-        onClick: () => { state.categoryId = category.id; renderGrid(); renderLeft(); },
-      }, h("span", { class: "chip__dot", style: { background: category.color } }), category.name));
+
+    if (state.departments.length || visibleCategories.length) {
+      const filters = h("div", { class: "pos__filters" });
+      if (state.departments.length) {
+        filters.appendChild(h("label", { class: "pos__filter" },
+          icon("layers"),
+          select({
+            value: state.departmentId ?? "",
+            options: [
+              { value: "", label: "All departments" },
+              ...state.departments.map((department) => ({ value: department.id, label: department.name })),
+            ],
+            onChange: (event) => {
+              state.departmentId = event.target.value ? Number(event.target.value) : null;
+              state.categoryId = null;
+              renderGrid();
+              renderLeft();
+            },
+          })));
+      }
+      if (visibleCategories.length) {
+        filters.appendChild(h("label", { class: "pos__filter" },
+          icon("tag"),
+          select({
+            value: state.categoryId ?? "",
+            options: [
+              { value: "", label: "All items" },
+              ...visibleCategories.map((category) => ({ value: category.id, label: category.name })),
+            ],
+            onChange: (event) => {
+              state.categoryId = event.target.value ? Number(event.target.value) : null;
+              renderGrid();
+              renderLeft();
+            },
+          })));
+      }
+      left.appendChild(filters);
     }
-    left.appendChild(cats);
 
     const gridWrap = h("div", { class: "pos__grid-wrap" });
     gridWrap.appendChild(h("div", {
@@ -1303,7 +1301,6 @@ export default async function posView(ctx) {
     }
   }
   document.addEventListener("keydown", onKeyDown);
-
   load().catch((error) => {
     clear(el);
     el.appendChild(alertBox(error.message, "danger"));
@@ -1311,7 +1308,9 @@ export default async function posView(ctx) {
 
   return {
     el,
-    destroy: () => document.removeEventListener("keydown", onKeyDown),
+    destroy: () => {
+      document.removeEventListener("keydown", onKeyDown);
+    },
     onActivate: () => {
       const search = el.querySelector("[data-pos-search]");
       if (search) search.focus({ preventScroll: true });

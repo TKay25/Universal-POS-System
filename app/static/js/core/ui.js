@@ -344,6 +344,30 @@ function popOverlay(entry) {
   document.removeEventListener("keydown", entry.keyHandler);
 }
 
+/* Footer primary actions submit asynchronously; show a spinner until the modal
+   closes (success) or an error alert appears. Explicit setLoading still wins. */
+function autoSpinFooter(footEl, bodyEl, isClosed) {
+  if (!footEl) return;
+  footEl.addEventListener("click", (event) => {
+    const btn = event.target.closest(".btn--primary");
+    if (!btn || btn.disabled) return;
+    setTimeout(() => {
+      if (btn.classList.contains("is-loading") || isClosed() || !btn.isConnected) return;
+      btn.classList.add("is-loading");
+      const finish = () => {
+        btn.classList.remove("is-loading");
+        observer.disconnect();
+        clearTimeout(guard);
+      };
+      const observer = new MutationObserver(() => {
+        if (bodyEl.querySelector(".alert--danger, .alert--warning")) finish();
+      });
+      observer.observe(bodyEl, { childList: true, subtree: true });
+      const guard = setTimeout(finish, 15000);
+    }, 0);
+  }, true);
+}
+
 export function modal({ title, subtitle, body, footer, size = "md", dismissible = true, onClose, icon: iconName } = {}) {
   const overlay = h("div", { class: "overlay" });
   const dialog = h("div", { class: `modal modal--${size}`, attrs: { role: "dialog", "aria-modal": "true" } });
@@ -372,6 +396,7 @@ export function modal({ title, subtitle, body, footer, size = "md", dismissible 
     overlay.remove();
     onClose?.();
   }
+  autoSpinFooter(footEl, bodyEl, () => closed);
   overlay.addEventListener("mousedown", (e) => {
     if (e.target === overlay && dismissible) close();
   });
@@ -411,6 +436,7 @@ export function drawer({ title, subtitle, body, footer, size = "", dismissible =
   });
   document.body.appendChild(overlay);
   pushOverlay(entry);
+  autoSpinFooter(panel.querySelector(".drawer__foot"), bodyEl, () => closed);
   return { el: overlay, panel, body: bodyEl, close };
 }
 

@@ -50,11 +50,23 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _engine_options(url: str) -> dict:
+    """Pool tuning. Remote URLs get a longer recycle so idle sockets are dropped."""
+    options = {"pool_recycle": 280}
+    # Each checkout pings the database; on a high-latency link that is a full
+    # round trip per request. Keep it on by default, allow it to be turned off.
+    options["pool_pre_ping"] = _env_bool("POS_DB_PRE_PING", True)
+    if not url.startswith("sqlite"):
+        options["pool_size"] = int(os.environ.get("POS_DB_POOL_SIZE", "5"))
+        options["max_overflow"] = int(os.environ.get("POS_DB_MAX_OVERFLOW", "10"))
+    return options
+
+
 class Config:
     SECRET_KEY = os.environ.get("POS_SECRET_KEY", "dev-secret-change-me-in-production")
     SQLALCHEMY_DATABASE_URI = _database_url()
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True, "pool_recycle": 300}
+    SQLALCHEMY_ENGINE_OPTIONS = _engine_options(SQLALCHEMY_DATABASE_URI)
 
     JSON_SORT_KEYS = False
     SESSION_COOKIE_HTTPONLY = True
@@ -75,10 +87,16 @@ class Config:
     RECEIPT_FOOTER_LIMIT = 240
     MAX_CUSTOM_MODULES = 40
 
+    # Reports and PDFs are cached briefly so repeat downloads are instant.
+    # Set to 0 to disable caching (handy while developing).
+    REPORT_CACHE_SECONDS = int(os.environ.get("POS_REPORT_CACHE_SECONDS", "60"))
+
 
 class TestConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SQLALCHEMY_ENGINE_OPTIONS = {}
     SEED_DEMO_DATA = False
     DEVELOPER_PASSWORD = "TestDev!2024"
     WTF_CSRF_ENABLED = False
+    REPORT_CACHE_SECONDS = 0

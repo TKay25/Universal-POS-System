@@ -20,6 +20,7 @@ from app.models import (
     Sale,
     Shift,
     TaxRate,
+    User,
 )
 from app.security import (
     ApiError,
@@ -373,6 +374,12 @@ def list_shifts():
     query = Shift.query.filter_by(company_id=company.id)
     if not current_user().has_permission("reports.view"):
         query = query.filter(Shift.user_id == current_user().id)
+    term = search_arg()
+    if term:
+        like = f"%{term}%"
+        query = query.outerjoin(User, User.id == Shift.user_id).outerjoin(
+            Register, Register.id == Shift.register_id
+        ).filter(db.or_(User.full_name.ilike(like), Register.name.ilike(like)))
     items, meta = paginate(query.order_by(Shift.opened_at.desc()), default_per_page=25)
     return jsonify({"items": [s.to_dict() for s in items], "meta": meta})
 

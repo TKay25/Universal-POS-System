@@ -14,6 +14,7 @@ from app.extensions import db
 from app.models import (
     Category,
     Customer,
+    Department,
     Layby,
     Location,
     Product,
@@ -25,7 +26,7 @@ from app.models import (
     StockMovement,
     Supplier,
 )
-from app.utils import csv_response, day_buckets, iso
+from app.utils import csv_response, day_buckets, iso, utcnow
 from app.services.timezones import local_date_sql, local_hour_sql, local_day_bounds, to_local
 
 REVENUE_STATUSES = ("completed", "partially_refunded", "refunded")
@@ -45,7 +46,15 @@ def _scalar(stmt, default=0):
     return default if value is None else value
 
 
-def overview(company, start: datetime, end: datetime, location_id: int | None = None) -> dict:
+def overview(company, start: datetime, end: datetime, location_id: int | None = None, *,
+             include_breakdowns: bool = True, include_payments: bool = True,
+             include_lists: bool = True, include_branches: bool = True,
+             include_departments: bool = True) -> dict:
+    """Aggregate the period.
+
+    The flags let exports fetch only the datasets they draw, which matters a lot
+    when the database is remote: every skipped section is one fewer round trip.
+    """
     company_id = company.id
     statuses = REVENUE_STATUSES
     branch_clause = [Sale.location_id == location_id] if location_id else []
@@ -85,6 +94,8 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
             local_date_sql(Sale.created_at, company).label("day"),
             func.coalesce(func.sum(Sale.total_cents), 0),
             func.count(Sale.id),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+            func.coalesce(func.sum(Sale.tax_cents), 0),
         )
         .where(
             Sale.company_id == company_id,
@@ -96,38 +107,158 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         .group_by("day")
         .order_by("day")
     ).all()
-    by_day = {str(row[0]): {"sales_cents": int(row[1]), "transactions": int(row[2])} for row in series_rows}
-    series = [
-        {
-            "date": day,
-            "sales_cents": by_day.get(day, {}).get("sales_cents", 0),
-            "transactions": by_day.get(day, {}).get("transactions", 0),
+    by_day = {
+        str(row[0]): {
+            "sales_cents": int(row[1]),
+            "transactions": int(row[2]),
+            "cost_cents": int(row[3]),
+            "tax_cents": int(row[4]),
         }
-        for day in day_buckets(to_local(start, company), to_local(end, company))
-    ]
-
-    payment_rows = db.session.execute(
-        select(
-            SalePayment.method_name,
-            func.coalesce(func.sum(SalePayment.amount_cents), 0),
-            func.count(SalePayment.id),
+        for row in series_rows
+    }
+    series = []
+    for day in day_buckets(to_local(start, company), to_local(end, company)):
+        bucket = by_day.get(day, {})
+        day_sales = bucket.get("sales_cents", 0)
+        day_cost = bucket.get("cost_cents", 0)
+        series.append(
+            {
+                "date": day,
+                "sales_cents": day_sales,
+                "transactions": bucket.get("transactions", 0),
+                "cost_cents": day_cost,
+                "tax_cents": bucket.get("tax_cents", 0),
+                "profit_cents": day_sales - day_cost,
+            }
         )
-        .join(Sale, Sale.id == SalePayment.sale_id)
-        .where(
-            Sale.company_id == company_id,
-            Sale.created_at >= start,
-            Sale.created_at <= end,
-            Sale.status.in_(statuses),
-            *branch_clause,
-        )
-        .group_by(SalePayment.method_name)
-        .order_by(func.sum(SalePayment.amount_cents).desc())
-    ).all()
-    payment_mix = [
-        {"name": row[0], "amount_cents": int(row[1]), "count": int(row[2])} for row in payment_rows
-    ]
 
-    top_rows = db.session.execute(
+    payment_mix = []
+    if include_payments:
+        payment_rows = db.session.execute(
+            select(
+                SalePayment.method_name,
+                func.coalesce(func.sum(SalePayment.amount_cents), 0),
+                func.count(SalePayment.id),
+            )
+            .join(Sale, Sale.id == SalePayment.sale_id)
+            .where(
+                Sale.company_id == company_id,
+                Sale.created_at >= start,
+                Sale.created_at <= end,
+                Sale.status.in_(statuses),
+                *branch_clause,
+            )
+            .group_by(SalePayment.method_name)
+            .order_by(func.sum(SalePayment.amount_cents).desc())
+        ).all()
+        payment_mix = [
+            {"name": row[0], "amount_cents": int(row[1]), "count": int(row[2])} for row in payment_rows
+        ]
+
+    top_products: list[dict] = []
+    category_mix: list[dict] = []
+    hourly: list[dict] = []
+    if include_breakdowns:
+        top_products = _top_products(company_id, start, end, statuses, branch_clause)
+        category_mix = _category_mix(company_id, start, end, statuses, branch_clause)
+        hourly = _hourly_mix(company, company_id, start, end, statuses, branch_clause)
+
+    recent = []
+    low_stock = []
+    if include_lists:
+        recent = (
+            db.session.execute(
+                select(Sale)
+                .where(Sale.company_id == company_id, *branch_clause)
+                .order_by(Sale.created_at.desc())
+                .limit(8)
+            )
+            .scalars()
+            .all()
+        )
+        low_stock = (
+            db.session.execute(
+                select(Product)
+                .where(
+                    Product.company_id == company_id,
+                    Product.is_active.is_(True),
+                    Product.track_stock.is_(True),
+                    Product.stock_qty <= Product.low_stock_threshold,
+                )
+                .order_by(Product.stock_qty.asc())
+                .limit(20)
+            )
+            .scalars()
+            .all()
+        )
+
+    gross_profit = int(sales_cents) - int(cost_cents)
+    average = int(sales_cents) / transactions if transactions else 0
+    ticket_average = int(sales_cents) / transactions if transactions else 0
+
+    branch_rows = []
+    if include_branches:
+        branch_rows = db.session.execute(
+            select(
+                func.coalesce(Location.name, "Unassigned"),
+                func.count(Sale.id),
+                func.coalesce(func.sum(Sale.total_cents), 0),
+                func.coalesce(func.sum(Sale.cost_cents), 0),
+            )
+            .select_from(Sale)
+            .outerjoin(Location, Location.id == Sale.location_id)
+            .where(
+                Sale.company_id == company_id,
+                Sale.created_at >= start,
+                Sale.created_at <= end,
+                Sale.status.in_(statuses),
+                *branch_clause,
+            )
+            .group_by(Location.name)
+            .order_by(func.sum(Sale.total_cents).desc())
+        ).all()
+
+    department_mix = []
+    if include_departments:
+        department_mix = _department_mix(company_id, start, end, statuses, branch_clause)
+
+    return {
+        "range": {"from": iso(start), "to": iso(end)},
+        "branches": [
+            {
+                "name": row[0],
+                "transactions": int(row[1]),
+                "sales_cents": int(row[2]),
+                "cost_cents": int(row[3]),
+                "profit_cents": int(row[2]) - int(row[3]),
+            }
+            for row in branch_rows
+        ],
+        "cards": {
+            "sales_cents": int(sales_cents),
+            "transactions": int(transactions),
+            "average_ticket_cents": int(round(average)),
+            "items_sold": round(float(items), 3),
+            "tax_cents": int(tax_cents),
+            "discount_cents": int(discount_cents),
+            "refunded_cents": int(refunded_cents),
+            "gross_profit_cents": gross_profit,
+            "cost_cents": int(cost_cents),
+            "ticket_average_cents": int(round(ticket_average)),
+        },
+        "series": series,
+        "payment_mix": payment_mix,
+        "top_products": top_products,
+        "category_mix": category_mix,
+        "department_mix": department_mix,
+        "hourly": hourly,
+        "recent_sales": [s.to_dict() for s in recent],
+        "low_stock": [p.to_dict() for p in low_stock],
+    }
+
+
+def _top_products(company_id, start, end, statuses, branch_clause) -> list[dict]:
+    rows = db.session.execute(
         select(
             SaleItem.name,
             func.coalesce(func.sum(SaleItem.qty), 0),
@@ -145,11 +276,11 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         .order_by(func.sum(SaleItem.qty).desc())
         .limit(8)
     ).all()
-    top_products = [
-        {"name": row[0], "qty": round(float(row[1]), 3), "revenue_cents": int(row[2])} for row in top_rows
-    ]
+    return [{"name": row[0], "qty": round(float(row[1]), 3), "revenue_cents": int(row[2])} for row in rows]
 
-    category_rows = db.session.execute(
+
+def _category_mix(company_id, start, end, statuses, branch_clause) -> list[dict]:
+    rows = db.session.execute(
         select(
             func.coalesce(Category.name, "Uncategorised"),
             func.coalesce(Category.color, "#94a3b8"),
@@ -170,12 +301,49 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         .order_by(func.sum(SaleItem.line_total_cents).desc())
         .limit(8)
     ).all()
-    category_mix = [
-        {"name": row[0], "color": row[1] or "#94a3b8", "revenue_cents": int(row[2])}
-        for row in category_rows
+    return [
+        {"name": row[0], "color": row[1] or "#94a3b8", "revenue_cents": int(row[2])} for row in rows
     ]
 
-    hourly_rows = db.session.execute(
+
+def _department_mix(company_id, start, end, statuses, branch_clause) -> list[dict]:
+    rows = db.session.execute(
+        select(
+            func.coalesce(Department.name, "Unassigned"),
+            func.coalesce(Department.color, "#94a3b8"),
+            func.coalesce(func.sum(SaleItem.qty), 0),
+            func.coalesce(func.sum(SaleItem.line_total_cents), 0),
+            func.coalesce(func.sum(SaleItem.qty * SaleItem.cost_cents), 0),
+        )
+        .select_from(SaleItem)
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .outerjoin(Product, Product.id == SaleItem.product_id)
+        .outerjoin(Department, Department.id == Product.department_id)
+        .where(
+            Sale.company_id == company_id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            Sale.status.in_(statuses),
+            *branch_clause,
+        )
+        .group_by(Department.name, Department.color)
+        .order_by(func.sum(SaleItem.line_total_cents).desc())
+    ).all()
+    return [
+        {
+            "name": row[0],
+            "color": row[1] or "#94a3b8",
+            "qty": round(float(row[2]), 3),
+            "revenue_cents": int(row[3]),
+            "cost_cents": int(row[4]),
+            "profit_cents": int(row[3]) - int(row[4]),
+        }
+        for row in rows
+    ]
+
+
+def _hourly_mix(company, company_id, start, end, statuses, branch_clause) -> list[dict]:
+    rows = db.session.execute(
         select(
             local_hour_sql(Sale.created_at, company),
             func.coalesce(func.sum(Sale.total_cents), 0),
@@ -190,92 +358,174 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         )
         .group_by(local_hour_sql(Sale.created_at, company))
     ).all()
-    hourly_map = {int(row[0]): (int(row[1]), int(row[2])) for row in hourly_rows if row[0] is not None}
-    hourly = [
-        {"hour": hour, "sales_cents": hourly_map.get(hour, (0, 0))[0], "transactions": hourly_map.get(hour, (0, 0))[1]}
+    buckets = {int(row[0]): (int(row[1]), int(row[2])) for row in rows if row[0] is not None}
+    return [
+        {"hour": hour, "sales_cents": buckets.get(hour, (0, 0))[0],
+         "transactions": buckets.get(hour, (0, 0))[1]}
         for hour in range(24)
     ]
 
-    recent = (
-        db.session.execute(
-            select(Sale)
-            .where(Sale.company_id == company_id, *branch_clause)
-            .order_by(Sale.created_at.desc())
-            .limit(8)
+
+def today_dashboard(company) -> dict:
+    start, end = local_day_bounds(company)
+    return overview(company, start, end)
+
+
+# --------------------------------------------------------------------------- #
+# Low stock (shared by the report, the PDF and the phone dashboard)
+# --------------------------------------------------------------------------- #
+def _low_stock_query(company_id: int):
+    return (
+        select(
+            Product.name,
+            Product.sku,
+            func.coalesce(Department.name, "Unassigned"),
+            func.coalesce(Product.stock_qty, 0),
+            func.coalesce(Product.low_stock_threshold, 0),
+            func.coalesce(Product.cost_cents, 0),
         )
-        .scalars()
-        .all()
+        .select_from(Product)
+        .outerjoin(Department, Department.id == Product.department_id)
+        .where(
+            Product.company_id == company_id,
+            Product.is_active.is_(True),
+            Product.track_stock.is_(True),
+            func.coalesce(Product.stock_qty, 0) <= func.coalesce(Product.low_stock_threshold, 0),
+        )
+        .order_by(func.coalesce(Product.stock_qty, 0), Product.name)
     )
 
-    low_stock = (
-        db.session.execute(
-            select(Product)
-            .where(
-                Product.company_id == company_id,
-                Product.is_active.is_(True),
-                Product.track_stock.is_(True),
-                Product.stock_qty <= Product.low_stock_threshold,
-            )
-            .order_by(Product.stock_qty.asc())
-            .limit(20)
-        )
-        .scalars()
-        .all()
+
+def _suggested_order(stock: float, threshold: float) -> int:
+    """Bring the shelf back to twice its low-stock point."""
+    return max(0, int(round(threshold * 2 - stock)))
+
+
+def low_stock_items(company, limit: int | None = None) -> list[dict]:
+    stmt = _low_stock_query(company.id)
+    if limit:
+        stmt = stmt.limit(limit)
+    return [
+        {
+            "name": row[0],
+            "sku": row[1] or "",
+            "department": row[2],
+            "stock": round(float(row[3] or 0), 2),
+            "threshold": int(row[4] or 0),
+            "order_qty": _suggested_order(float(row[3] or 0), float(row[4] or 0)),
+            "value_cents": int(round(float(row[3] or 0) * int(row[5] or 0))),
+        }
+        for row in db.session.execute(stmt).all()
+    ]
+
+
+def mobile_snapshot(company, start: datetime, end: datetime, location_id: int | None = None) -> dict:
+    """Everything the phone app shows for one period: six targeted queries."""
+    statuses = REVENUE_STATUSES
+    branch_clause = [Sale.location_id == location_id] if location_id else []
+    scope = (
+        Sale.company_id == company.id,
+        Sale.created_at >= start,
+        Sale.created_at <= end,
+        Sale.status.in_(statuses),
+        *branch_clause,
     )
 
-    gross_profit = int(sales_cents) - int(cost_cents)
-    average = int(sales_cents) / transactions if transactions else 0
-    ticket_average = int(sales_cents) / transactions if transactions else 0
+    totals = db.session.execute(
+        select(
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+            func.coalesce(func.sum(Sale.tax_cents), 0),
+            func.coalesce(func.sum(Sale.discount_cents), 0),
+            func.coalesce(func.sum(Sale.refunded_cents), 0),
+        ).where(*scope)
+    ).one()
+    transactions = int(totals[0] or 0)
+    sales_cents = int(totals[1] or 0)
+    cost_cents = int(totals[2] or 0)
+    cards = {
+        "transactions": transactions,
+        "sales_cents": sales_cents,
+        "cost_cents": cost_cents,
+        "tax_cents": int(totals[3] or 0),
+        "discount_cents": int(totals[4] or 0),
+        "refunded_cents": int(totals[5] or 0),
+        "profit_cents": sales_cents - cost_cents,
+        "average_ticket_cents": int(sales_cents / transactions) if transactions else 0,
+    }
+
+    series_rows = db.session.execute(
+        select(
+            local_date_sql(Sale.created_at, company).label("day"),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+        )
+        .where(*scope)
+        .group_by("day")
+        .order_by("day")
+    ).all()
+    by_day = {str(row[0]): (int(row[1]), int(row[2]), int(row[3])) for row in series_rows}
+    series = []
+    for day in day_buckets(to_local(start, company), to_local(end, company)):
+        day_sales, day_count, day_cost = by_day.get(day, (0, 0, 0))
+        series.append({
+            "date": day,
+            "sales_cents": day_sales,
+            "transactions": day_count,
+            "profit_cents": day_sales - day_cost,
+        })
 
     branch_rows = db.session.execute(
         select(
             func.coalesce(Location.name, "Unassigned"),
             func.count(Sale.id),
             func.coalesce(func.sum(Sale.total_cents), 0),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
         )
         .select_from(Sale)
         .outerjoin(Location, Location.id == Sale.location_id)
-        .where(
-            Sale.company_id == company_id,
-            Sale.created_at >= start,
-            Sale.created_at <= end,
-            Sale.status.in_(statuses),
-            *branch_clause,
-        )
+        .where(*scope)
         .group_by(Location.name)
         .order_by(func.sum(Sale.total_cents).desc())
     ).all()
+    branches = [
+        {
+            "name": row[0],
+            "transactions": int(row[1]),
+            "sales_cents": int(row[2]),
+            "cost_cents": int(row[3]),
+            "profit_cents": int(row[2]) - int(row[3]),
+        }
+        for row in branch_rows
+    ]
 
+    payment_rows = db.session.execute(
+        select(SalePayment.method_name, func.coalesce(func.sum(SalePayment.amount_cents), 0))
+        .join(Sale, Sale.id == SalePayment.sale_id)
+        .where(*scope)
+        .group_by(SalePayment.method_name)
+        .order_by(func.sum(SalePayment.amount_cents).desc())
+    ).all()
+
+    stock = low_stock_items(company)
     return {
         "range": {"from": iso(start), "to": iso(end)},
-        "branches": [
-            {"name": row[0], "transactions": int(row[1]), "sales_cents": int(row[2])} for row in branch_rows
-        ],
-        "cards": {
-            "sales_cents": int(sales_cents),
-            "transactions": int(transactions),
-            "average_ticket_cents": int(round(average)),
-            "items_sold": round(float(items), 3),
-            "tax_cents": int(tax_cents),
-            "discount_cents": int(discount_cents),
-            "refunded_cents": int(refunded_cents),
-            "gross_profit_cents": gross_profit,
-            "cost_cents": int(cost_cents),
-            "ticket_average_cents": int(round(ticket_average)),
-        },
+        "cards": cards,
         "series": series,
-        "payment_mix": payment_mix,
-        "top_products": top_products,
-        "category_mix": category_mix,
-        "hourly": hourly,
-        "recent_sales": [s.to_dict() for s in recent],
-        "low_stock": [p.to_dict() for p in low_stock],
+        "branches": branches,
+        "departments": _department_mix(company.id, start, end, statuses, branch_clause),
+        "payment_mix": [{"name": row[0], "amount_cents": int(row[1])} for row in payment_rows],
+        "stock": {
+            "alerts": len(stock),
+            "low_count": len([item for item in stock if item["stock"] > 0]),
+            "out_count": len([item for item in stock if item["stock"] <= 0]),
+            "items": stock,
+        },
+        "local_today": to_local(utcnow(), company).date().isoformat(),
+        "generated_at": iso(utcnow()),
     }
-
-
-def today_dashboard(company) -> dict:
-    start, end = local_day_bounds(company)
-    return overview(company, start, end)
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +547,7 @@ def report_sales(company, start, end):
             func.coalesce(Sale.discount_cents, 0),
             func.coalesce(Sale.refunded_cents, 0),
             func.coalesce(Sale.user_id, 0),
+            func.coalesce(Sale.cost_cents, 0),
         )
         .select_from(Sale)
         .outerjoin(Customer, Customer.id == Sale.customer_id)
@@ -308,17 +559,19 @@ def report_sales(company, start, end):
     for row in rows:
         row[1] = row[1].strftime("%Y-%m-%d %H:%M") if row[1] else ""
         row[8] = users.get(row[8], "—")
+        row.append(int(row[4] or 0) - int(row[9] or 0))
     return rows
 
 
 def report_products(company, start, end):
-    return _rows(
+    rows = _rows(
         select(
             SaleItem.name,
             func.coalesce(func.sum(SaleItem.qty), 0),
             func.coalesce(func.sum(SaleItem.line_total_cents), 0),
             func.coalesce(func.sum(SaleItem.discount_cents), 0),
             func.coalesce(func.sum(SaleItem.tax_cents), 0),
+            func.coalesce(func.sum(SaleItem.qty * SaleItem.cost_cents), 0),
         )
         .join(Sale, Sale.id == SaleItem.sale_id)
         .where(
@@ -330,14 +583,21 @@ def report_products(company, start, end):
         .group_by(SaleItem.name)
         .order_by(func.sum(SaleItem.line_total_cents).desc())
     )
+    for row in rows:
+        revenue = int(row[2] or 0)
+        cost = int(round(float(row[5] or 0)))
+        row.append(cost)
+        row.append(revenue - cost)
+    return rows
 
 
 def report_categories(company, start, end):
-    return _rows(
+    rows = _rows(
         select(
             func.coalesce(Category.name, "Uncategorised"),
             func.coalesce(func.sum(SaleItem.qty), 0),
             func.coalesce(func.sum(SaleItem.line_total_cents), 0),
+            func.coalesce(func.sum(SaleItem.qty * SaleItem.cost_cents), 0),
         )
         .select_from(SaleItem)
         .join(Sale, Sale.id == SaleItem.sale_id)
@@ -352,6 +612,12 @@ def report_categories(company, start, end):
         .group_by(Category.name)
         .order_by(func.sum(SaleItem.line_total_cents).desc())
     )
+    for row in rows:
+        revenue = int(row[2] or 0)
+        cost = int(round(float(row[3] or 0)))
+        row.append(cost)
+        row.append(revenue - cost)
+    return rows
 
 
 def report_payments(company, start, end):
@@ -403,6 +669,7 @@ def report_cashiers(company, start, end):
             func.coalesce(func.sum(Sale.total_cents), 0),
             func.coalesce(func.sum(Sale.discount_cents), 0),
             func.coalesce(func.sum(Sale.refunded_cents), 0),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
         )
         .where(
             Sale.company_id == company.id,
@@ -415,22 +682,51 @@ def report_cashiers(company, start, end):
     users = {u.id: u.full_name for u in company.users}
     for row in rows:
         row[0] = users.get(row[0], "Deleted user")
+        cost = int(row[5] or 0)
+        row[5] = cost
+        row.append(int(row[2] or 0) - cost)
     return rows
 
 
 def report_inventory(company, start, end):
-    return _rows(
-        select(
-            Product.name,
-            Product.sku,
-            Product.stock_qty,
-            Product.low_stock_threshold,
-            Product.cost_cents,
-            Product.price_cents,
-        )
-        .where(Product.company_id == company.id, Product.is_active.is_(True))
+    from app.services import fifo
+
+    products = (
+        Product.query.filter_by(company_id=company.id, is_active=True)
         .order_by(Product.name)
+        .all()
     )
+    values = fifo.value_map(company.id, [product.id for product in products])
+    rows = []
+    for product in products:
+        value = values.get(product.id)
+        if value is None:
+            value = int(round(float(product.stock_qty or 0) * int(product.cost_cents or 0)))
+        rows.append([
+            product.name,
+            product.sku,
+            round(product.stock_qty or 0, 3),
+            product.low_stock_threshold,
+            product.cost_cents,
+            product.price_cents,
+            value,
+        ])
+    return rows
+
+
+def report_low_stock(company, start, end):
+    return [
+        [
+            item["name"],
+            item["sku"],
+            item["department"],
+            item["stock"],
+            item["threshold"],
+            item["order_qty"],
+            item["value_cents"],
+        ]
+        for item in low_stock_items(company)
+    ]
 
 
 def report_stock_movements(company, start, end):
@@ -544,6 +840,7 @@ def report_branches(company, start, end):
             func.coalesce(func.sum(Sale.total_cents), 0),
             func.coalesce(func.sum(Sale.refunded_cents), 0),
             func.coalesce(func.sum(Sale.discount_cents), 0),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
         )
         .select_from(Sale)
         .outerjoin(Location, Location.id == Sale.location_id)
@@ -556,6 +853,10 @@ def report_branches(company, start, end):
         .group_by(Location.name)
         .order_by(func.sum(Sale.total_cents).desc())
     )
+    for row in rows:
+        cost = int(row[5] or 0)
+        row[5] = cost
+        row.append(int(row[2] or 0) - cost)
     return rows
 
 
@@ -582,6 +883,8 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "discount", "label": "Discount", "type": "money"},
             {"key": "refunded", "label": "Refunded", "type": "money"},
             {"key": "cashier", "label": "Cashier", "type": "text"},
+            {"key": "cost", "label": "Cost", "type": "money"},
+            {"key": "profit", "label": "Profit", "type": "money"},
         ],
         "build": report_sales,
     },
@@ -594,6 +897,8 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "revenue", "label": "Revenue", "type": "money"},
             {"key": "discount", "label": "Discount", "type": "money"},
             {"key": "tax", "label": "Tax", "type": "money"},
+            {"key": "cost", "label": "Cost", "type": "money"},
+            {"key": "profit", "label": "Profit", "type": "money"},
         ],
         "build": report_products,
     },
@@ -604,6 +909,8 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "category", "label": "Category", "type": "text"},
             {"key": "qty", "label": "Qty sold", "type": "number"},
             {"key": "revenue", "label": "Revenue", "type": "money"},
+            {"key": "cost", "label": "Cost", "type": "money"},
+            {"key": "profit", "label": "Profit", "type": "money"},
         ],
         "build": report_categories,
     },
@@ -637,21 +944,38 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "total", "label": "Sales", "type": "money"},
             {"key": "discount", "label": "Discounts", "type": "money"},
             {"key": "refunded", "label": "Refunded", "type": "money"},
+            {"key": "cost", "label": "Cost", "type": "money"},
+            {"key": "profit", "label": "Profit", "type": "money"},
         ],
         "build": report_cashiers,
     },
     "inventory": {
         "name": "Inventory valuation",
-        "description": "Current stock levels and stock value.",
+        "description": "Current stock levels and stock value at FIFO cost.",
         "columns": [
             {"key": "product", "label": "Product", "type": "text"},
             {"key": "sku", "label": "SKU", "type": "text"},
             {"key": "stock", "label": "On hand", "type": "number"},
             {"key": "threshold", "label": "Low at", "type": "number"},
-            {"key": "cost", "label": "Unit cost", "type": "money"},
-            {"key": "price", "label": "Price", "type": "money"},
+            {"key": "cost", "label": "Buying price", "type": "money"},
+            {"key": "price", "label": "Selling price", "type": "money"},
+            {"key": "value", "label": "Stock value (FIFO)", "type": "money"},
         ],
         "build": report_inventory,
+    },
+    "low_stock": {
+        "name": "Low stock",
+        "description": "Products at or below their low-stock point, with a suggested order quantity.",
+        "columns": [
+            {"key": "product", "label": "Product", "type": "text"},
+            {"key": "sku", "label": "SKU", "type": "text"},
+            {"key": "department", "label": "Department", "type": "text"},
+            {"key": "stock", "label": "On hand", "type": "number"},
+            {"key": "threshold", "label": "Low at", "type": "number"},
+            {"key": "order_qty", "label": "Suggested order", "type": "number"},
+            {"key": "value", "label": "Stock value", "type": "money"},
+        ],
+        "build": report_low_stock,
     },
     "stock_movements": {
         "name": "Stock movements",
@@ -730,6 +1054,8 @@ REPORT_REGISTRY: dict[str, dict] = {
             {"key": "sales", "label": "Sales", "type": "money"},
             {"key": "refunds", "label": "Refunds", "type": "money"},
             {"key": "discounts", "label": "Discounts", "type": "money"},
+            {"key": "cost", "label": "Cost", "type": "money"},
+            {"key": "profit", "label": "Profit", "type": "money"},
         ],
         "build": report_branches,
     },
@@ -751,6 +1077,7 @@ def public_registry(company) -> list[dict]:
     """Only expose reports whose module is enabled for the company."""
     gates = {
         "inventory": "inventory",
+        "low_stock": "inventory",
         "stock_movements": "inventory",
         "customers": "customers",
         "refunds": "refunds",

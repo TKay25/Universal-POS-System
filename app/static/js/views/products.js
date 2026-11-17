@@ -11,7 +11,6 @@ import {
   segmented, drawer, switchRow,
 } from "../core/ui.js";
 
-const EMOJI_CHOICES = ["☕", "🥐", "🍰", "🍕", "🍔", "🥗", "🧁", "🍫", "🥤", "🧊", "🫘", "🍵", "📦", "🎧", "🔌", "⌚", "📱", "💻", "🛠️", "🎁"];
 const COLORS = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9", "#f97316", "#64748b"];
 
 export default async function productsView(ctx) {
@@ -107,9 +106,9 @@ export default async function productsView(ctx) {
           {
             key: "name", label: "Product",
             render: (row) => h("div", { class: "flex items-center gap-2" },
-              h("div", { class: "module-card__icon", style: { fontSize: "16px" } }, row.emoji || "📦"),
+              h("div", { class: "module-card__icon product-icon" }, productIcon(row.icon)),
               h("div", { style: { minWidth: 0 } },
-                h("div", { class: "strong truncate" }, row.name, row.is_featured ? h("span", { class: "dim" }, " ", icon("star")) : null),
+                h("div", { class: "strong truncate" }, row.name, row.is_featured ? h("span", { class: "inline-icon", title: "Featured" }, icon("star")) : null),
                 h("div", { class: "tiny dim" }, [row.sku, row.barcode].filter(Boolean).join(" · ") || "No SKU"))),
           },
           {

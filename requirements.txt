@@ -1,4 +1,7 @@
 Flask>=3.1,<4
 Flask-SQLAlchemy>=3.1,<4
 SQLAlchemy>=2.0.30,<3
+psycopg2-binary>=2.9,<3
+reportlab>=4.0,<5
+gunicorn>=21.2,<24
 pytest>=8.0,<9

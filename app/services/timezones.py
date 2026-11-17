@@ -10,6 +10,8 @@ from datetime import datetime, time as dtime, timedelta, timezone
 
 from sqlalchemy import func
 
+from app.extensions import db
+
 UTC = timezone.utc
 DEFAULT_TIMEZONE = "Africa/Harare"
 

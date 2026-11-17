@@ -6,6 +6,8 @@ import secrets
 from functools import wraps
 
 from flask import current_app, g, jsonify, request, session
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
 
 from app.extensions import db
 from app.models import AuditLog, Company, User
@@ -77,7 +79,13 @@ def current_user() -> User | None:
     user = None
     user_id = session.get("user_id")
     if user_id:
-        user = db.session.get(User, user_id)
+        # Pull the company along with the user: one round trip instead of two,
+        # which matters when the database is remote.
+        user = db.session.execute(
+            select(User)
+            .options(joinedload(User.company), joinedload(User.role))
+            .where(User.id == user_id)
+        ).scalars().first()
         if user and user.status != "active":
             user = None
     g.current_user = user
