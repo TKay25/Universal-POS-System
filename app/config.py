@@ -35,7 +35,14 @@ def _database_url() -> str:
         return f"sqlite:///{(BASE_DIR / 'instance' / 'universal_pos.db').as_posix()}"
     if raw.startswith("postgres://"):
         raw = "postgresql://" + raw[len("postgres://"):]
-    if raw.startswith("postgresql://") or raw.startswith("postgresql+psycopg2://"):
+    if raw.startswith("postgresql"):
+        # Always drive Postgres through psycopg2, which requirements.txt ships.
+        # Newer SQLAlchemy releases pick psycopg 3 for a bare ``postgresql://``
+        # URL, which is not installed and crashes the worker at boot.
+        rest = raw[len("postgresql"):]
+        if rest.startswith("+"):
+            rest = rest[rest.index("://"):]
+        raw = "postgresql+psycopg2" + rest
         host = raw.split("@")[-1]
         is_local = host.startswith(("localhost", "127.0.0.1", "::1"))
         if not is_local and "sslmode=" not in raw:

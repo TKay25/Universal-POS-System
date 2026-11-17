@@ -73,8 +73,10 @@ Postgres tables) to reseed.
    | `POS_DB_PRE_PING` | `true` (default) — keep it on for Render Postgres |
 
    Leave `POS_DATABASE_URL` unset to fall back to SQLite (not recommended on Render).
-   `postgres://` URLs are normalised to `postgresql://` and `sslmode=require` is added
-   automatically for remote hosts.
+   `postgres://`, `postgresql://` and `postgresql+psycopg://` URLs are all normalised to
+   `postgresql+psycopg2://` (the driver `requirements.txt` installs) and `sslmode=require` is
+   added automatically for remote hosts — so the worker can never boot into a driver that is
+   not installed.
 
    > **Use the Internal Database URL.** The External URL adds a full network round trip to
    > every query — a report with eight aggregates takes seconds instead of milliseconds.
@@ -94,6 +96,13 @@ never installed `requirements.txt` — gunicorn is listed there.
 2. Confirm **Build Command** is `pip install -r requirements.txt` and **Root Directory** is
    the repository root.
 3. Trigger **Manual Deploy → Clear build cache & deploy** so the environment is rebuilt.
+
+### `ModuleNotFoundError: No module named 'psycopg'`
+
+The worker booted but SQLAlchemy picked the psycopg **3** driver, which is not installed.
+`_database_url()` now rewrites any Postgres URL to `postgresql+psycopg2://`, so redeploying
+this code fixes it without touching the environment. (If you ever *want* psycopg 3, add
+`psycopg[binary]` to `requirements.txt` and remove that normalisation.)
 
 
 ### Demo logins
@@ -259,8 +268,8 @@ staff must *enter* a workspace to act inside it and never inherit tenant admin r
 
 44 tests cover pricing, auth/RBAC, checkout/refund/void, lay-by lifecycle, duplicate
 guards, branch attribution, bulk import/count, insights, low-stock and phone-app feeds,
-summary/branch/department breakdowns, activity log, movement/shift search, PDF exports and
-developer flows.
+summary/branch/department breakdowns, activity log, movement/shift search, database URL
+normalisation, PDF exports and developer flows.
 
 ## Layout
 
