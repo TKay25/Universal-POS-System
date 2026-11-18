@@ -1910,7 +1910,13 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   box-shadow: 0 6px 16px -10px var(--primary);
 }
 
-.mapp__scroll { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
+.mapp__scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
 .mapp__body {
   display: flex;
   flex-direction: column;
@@ -2593,3 +2599,7 @@ textarea.input, .textarea { border-radius: 12px; }
 .auth__demo-row > button { grid-column: 2; grid-row: 1 / span 2; }
 .auth__demo-row + .auth__demo-row { border-top: 1px solid var(--hairline); }
 .auth__points { border-top: 1px solid rgba(255, 255, 255, .1); padding-top: 18px; }
+
+/* Long labels never push a mobile card wider than the screen. */
+.mtable__head span, .mtable__row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mfeed__row, .mdownloads__row { min-width: 0; }
