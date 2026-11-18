@@ -95,7 +95,6 @@ DEPARTMENT_COLORS = {
     "Kitchenware": "#c2410c",
 }
 
-
 def _make_user(company, role, email, name, password, *, pin=None, color="#5b5bd6") -> User:
     user = User(
         company=company,
