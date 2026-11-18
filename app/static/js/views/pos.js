@@ -399,7 +399,10 @@ export default async function posView(ctx) {
     if (!grid) return;
     const cfg = state.config.pos || {};
     const cols = Number(cfg.grid_columns) || 4;
-    const minWidth = cols >= 6 ? 132 : cols === 5 ? 146 : cols === 4 ? 162 : 184;
+    const available = (grid.parentElement?.clientWidth || 0) - 32;
+    const base = cols >= 6 ? 176 : cols === 5 ? 192 : cols === 4 ? 208 : 232;
+    // Never stretch a handful of tiles across the whole pane on narrow screens.
+    const minWidth = available && available < 700 ? Math.min(base, 168) : base;
     grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${minWidth}px, 1fr))`;
     clear(grid);
     const items = filteredProducts();
