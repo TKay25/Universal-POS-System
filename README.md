@@ -266,17 +266,17 @@ staff must *enter* a workspace to act inside it and never inherit tenant admin r
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-44 tests cover pricing, auth/RBAC, checkout/refund/void, lay-by lifecycle, duplicate
+53 tests cover pricing, auth/RBAC, checkout/refund/void, lay-by lifecycle, duplicate
 guards, branch attribution, bulk import/count, insights, low-stock and phone-app feeds,
 summary/branch/department breakdowns, activity log, movement/shift search, database URL
-normalisation, PDF exports and developer flows.
+normalisation, model constructors, PDF exports and developer flows.
 
 ## Layout
 
 ```
 app/
   __init__.py        app factory, CLI, SPA fallback
-  models.py          tenant-scoped data model
+  models.py          tenant-scoped data model (typed `Base` declarative class)
   modules.py         module catalogue + config schemas
   defaults.py        permissions, default roles (Administrator, Manager, Cashier, Accountant)
   security.py        CSRF, sessions, RBAC decorators, audit

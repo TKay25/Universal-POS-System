@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 from datetime import timedelta
+from typing import NamedTuple
 
 from app.defaults import DEFAULT_ROLES
 from app.extensions import db
@@ -95,7 +96,18 @@ DEPARTMENT_COLORS = {
     "Kitchenware": "#c2410c",
 }
 
-def _make_user(company, role, email, name, password, *, pin=None, color="#5b5bd6") -> User:
+
+class CompanySetup(NamedTuple):
+    """Reference rows a freshly seeded company needs for the records that follow."""
+
+    location: Location
+    register: Register
+    tax: TaxRate
+    methods: list[PaymentMethod]
+
+
+def _make_user(company: Company, role: Role, email: str, name: str, password: str, *,
+               pin: str | None = None, color: str = "#5b5bd6") -> User:
     user = User(
         company=company,
         role=role,
@@ -111,7 +123,7 @@ def _make_user(company, role, email, name, password, *, pin=None, color="#5b5bd6
     return user
 
 
-def _make_roles(company) -> dict[str, Role]:
+def _make_roles(company: Company) -> dict[str, Role]:
     roles: dict[str, Role] = {}
     for spec in DEFAULT_ROLES:
         role = Role(
@@ -126,7 +138,9 @@ def _make_roles(company) -> dict[str, Role]:
     return roles
 
 
-def _make_config(company, *, tax_name, tax_rate, currency, tax_number, company_reg_number, extra_methods=None):
+def _make_config(company: Company, *, tax_name: str, tax_rate: float, currency: dict,
+                 tax_number: str, company_reg_number: str,
+                 extra_methods: list[PaymentMethod] | None = None) -> CompanySetup:
     company.update_settings({
         "currency": currency,
         "business": {
@@ -150,7 +164,7 @@ def _make_config(company, *, tax_name, tax_rate, currency, tax_number, company_r
     tax = TaxRate(company=company, name=tax_name, rate=tax_rate, is_default=True)
     db.session.add(tax)
 
-    methods = [
+    methods: list[PaymentMethod] = [
         PaymentMethod(company=company, name="Cash", type="cash", icon="cash", opens_drawer=True, sort_order=10),
         PaymentMethod(company=company, name="Card", type="card", icon="card", sort_order=20),
         PaymentMethod(
@@ -161,14 +175,15 @@ def _make_config(company, *, tax_name, tax_rate, currency, tax_number, company_r
     methods += extra_methods or []
     for method in methods:
         db.session.add(method)
-    return location, register, tax, methods
+    return CompanySetup(location, register, tax, methods)
 
 
-def _make_catalog(company, products, tax) -> list[Product]:
+def _make_catalog(company: Company, products: list[tuple], tax: TaxRate) -> list[Product]:
     departments: dict[str, Department] = {}
     categories: dict[str, Category] = {}
 
-    for index, (_, department_name, category_name, *_rest) in enumerate(products):
+    for index, spec in enumerate(products):
+        department_name, category_name = spec[1], spec[2]
         if department_name not in departments:
             department = Department(
                 company=company,
@@ -215,7 +230,7 @@ def _make_catalog(company, products, tax) -> list[Product]:
     return created
 
 
-def _make_customers(company, rows) -> list[Customer]:
+def _make_customers(company: Company, rows: list[tuple]) -> list[Customer]:
     customers = []
     for name, email, phone, points in rows:
         customer = Customer(
@@ -308,8 +323,10 @@ def _seed_sale(company, *, user, customer, lines, method, when, shift=None,
     return sale
 
 
-def _generate_sales(company, users, customers, products, methods, *, days, per_day, seed_value,
-                    location=None, register=None):
+def _generate_sales(company: Company, users: list[User], customers: list[Customer],
+                    products: list[Product], methods: list[PaymentMethod], *, days: int,
+                    per_day: tuple[int, int], seed_value: int,
+                    location: Location | None = None, register: Register | None = None):
     db.session.flush()  # assign ids to freshly seeded users, products and tills
     rng = random.Random(seed_value)
     now = utcnow()
@@ -351,7 +368,9 @@ def _generate_sales(company, users, customers, products, methods, *, days, per_d
             )
 
 
-def _seed_laybys(company, users, customers, products, methods, *, plans, seed_value):
+def _seed_laybys(company: Company, users: list[User], customers: list[Customer],
+                 products: list[Product], methods: list[PaymentMethod], *, plans: list[tuple],
+                 seed_value: int):
     """Create realistic lay-bys from ``(customer_index, product_indexes, ratio, days, part_paid)`` plans."""
     db.session.flush()  # assign ids to freshly seeded customers and products
     rng = random.Random(seed_value)
@@ -425,7 +444,7 @@ def seed_all(app) -> dict:
     db.session.add(aurora)
     db.session.flush()
 
-    aurora.location, aurora.register, aurora.tax, aurora.methods = _make_config(
+    aurora_setup = _make_config(
         aurora,
         tax_name="VAT 15%",
         tax_rate=15.0,
@@ -452,7 +471,7 @@ def seed_all(app) -> dict:
     aurora.set_module("tips", True)
     aurora.set_module("layby", True, {"deposit_percent": 20, "max_days": 60})
 
-    aurora_products = _make_catalog(aurora, COFFEE_PRODUCTS, aurora.tax)
+    aurora_products = _make_catalog(aurora, COFFEE_PRODUCTS, aurora_setup.tax)
     aurora_customers = _make_customers(
         aurora,
         [
@@ -483,12 +502,12 @@ def seed_all(app) -> dict:
         [aurora_owner, aurora_cashier, aurora_manager],
         aurora_customers,
         aurora_products,
-        aurora.methods,
+        aurora_setup.methods,
         days=44,
         per_day=(3, 9),
         seed_value=7,
-        location=aurora.location,
-        register=aurora.register,
+        location=aurora_setup.location,
+        register=aurora_setup.register,
     )
 
     # ---- company two: Nova Home & Tech ---------------------------------- #
@@ -513,7 +532,7 @@ def seed_all(app) -> dict:
     db.session.add(nova)
     db.session.flush()
 
-    nova.location, nova.register, nova.tax, nova.methods = _make_config(
+    nova_setup = _make_config(
         nova,
         tax_name="VAT 15%",
         tax_rate=15.0,
@@ -534,7 +553,7 @@ def seed_all(app) -> dict:
     nova.set_module("suppliers", True)
     nova.set_module("layby", True, {"deposit_percent": 25, "max_days": 90, "cancellation_fee_percent": 5})
 
-    nova_products = _make_catalog(nova, ELECTRONICS_PRODUCTS, nova.tax)
+    nova_products = _make_catalog(nova, ELECTRONICS_PRODUCTS, nova_setup.tax)
     nova_customers = _make_customers(
         nova,
         [
@@ -570,16 +589,16 @@ def seed_all(app) -> dict:
         [nova_owner, nova_manager],
         nova_customers,
         nova_products,
-        nova.methods,
+        nova_setup.methods,
         days=21,
         per_day=(1, 4),
         seed_value=11,
-        location=nova.location,
-        register=nova.register,
+        location=nova_setup.location,
+        register=nova_setup.register,
     )
 
     _seed_laybys(
-        nova, [nova_owner, nova_manager], nova_customers, nova_products, nova.methods,
+        nova, [nova_owner, nova_manager], nova_customers, nova_products, nova_setup.methods,
         plans=[
             (0, [0], 0.30, 45, True),          # Smart TV 55" - half paid already
             (1, [1, 2], 0.25, 60, False),      # 32" TV + soundbar
@@ -587,7 +606,7 @@ def seed_all(app) -> dict:
         seed_value=3,
     )
     _seed_laybys(
-        aurora, [aurora_owner], aurora_customers, aurora_products, aurora.methods,
+        aurora, [aurora_owner], aurora_customers, aurora_products, aurora_setup.methods,
         plans=[
             (0, [13, 14], 0.25, 30, True),     # mug + beans gift set
             (1, [15], 0.20, 45, False),        # cold cup

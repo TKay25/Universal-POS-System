@@ -7,6 +7,7 @@ an integer number of minor units (cents) to avoid floating point drift.
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 from sqlalchemy import UniqueConstraint
 
@@ -21,10 +22,29 @@ class TimestampMixin:
     updated_at = db.Column(db.DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
+class Base(db.Model):
+    """Declarative base for every table.
+
+    SQLAlchemy installs a ``**kwargs`` constructor on mapped classes at runtime, which
+    type checkers cannot see. Declaring it here (mirroring
+    ``sqlalchemy.orm.decl_base._declarative_constructor``) keeps ``Product(name=…)``
+    and the rest type-checked without changing runtime behaviour.
+    """
+
+    __abstract__ = True
+
+    def __init__(self, **kwargs: Any) -> None:
+        cls = type(self)
+        for key, value in kwargs.items():
+            if not hasattr(cls, key):
+                raise TypeError(f"{key!r} is an invalid keyword argument for {cls.__name__}")
+            setattr(self, key, value)
+
+
 # --------------------------------------------------------------------------- #
 # Tenants
 # --------------------------------------------------------------------------- #
-class Company(TimestampMixin, db.Model):
+class Company(TimestampMixin, Base):
     __tablename__ = "companies"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -126,7 +146,7 @@ class Company(TimestampMixin, db.Model):
         return f"<Company {self.slug}>"
 
 
-class CompanyModule(TimestampMixin, db.Model):
+class CompanyModule(TimestampMixin, Base):
     __tablename__ = "company_modules"
     __table_args__ = (UniqueConstraint("company_id", "key", name="uq_company_module"),)
 
@@ -140,7 +160,7 @@ class CompanyModule(TimestampMixin, db.Model):
     company = db.relationship("Company", back_populates="modules")
 
 
-class Role(TimestampMixin, db.Model):
+class Role(TimestampMixin, Base):
     __tablename__ = "roles"
     __table_args__ = (UniqueConstraint("company_id", "name", name="uq_role_company_name"),)
 
@@ -165,7 +185,7 @@ class Role(TimestampMixin, db.Model):
         }
 
 
-class User(TimestampMixin, db.Model):
+class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -259,7 +279,7 @@ class User(TimestampMixin, db.Model):
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-class Location(TimestampMixin, db.Model):
+class Location(TimestampMixin, Base):
     __tablename__ = "locations"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -287,7 +307,7 @@ class Location(TimestampMixin, db.Model):
         }
 
 
-class Register(TimestampMixin, db.Model):
+class Register(TimestampMixin, Base):
     __tablename__ = "registers"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -311,7 +331,7 @@ class Register(TimestampMixin, db.Model):
         }
 
 
-class TaxRate(TimestampMixin, db.Model):
+class TaxRate(TimestampMixin, Base):
     __tablename__ = "tax_rates"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -334,7 +354,7 @@ class TaxRate(TimestampMixin, db.Model):
         }
 
 
-class PaymentMethod(TimestampMixin, db.Model):
+class PaymentMethod(TimestampMixin, Base):
     __tablename__ = "payment_methods"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -361,7 +381,7 @@ class PaymentMethod(TimestampMixin, db.Model):
         }
 
 
-class CustomField(TimestampMixin, db.Model):
+class CustomField(TimestampMixin, Base):
     __tablename__ = "custom_fields"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -391,7 +411,7 @@ class CustomField(TimestampMixin, db.Model):
 # --------------------------------------------------------------------------- #
 # Catalog
 # --------------------------------------------------------------------------- #
-class Department(TimestampMixin, db.Model):
+class Department(TimestampMixin, Base):
     __tablename__ = "departments"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -425,7 +445,7 @@ class Department(TimestampMixin, db.Model):
         }
 
 
-class Category(TimestampMixin, db.Model):
+class Category(TimestampMixin, Base):
     __tablename__ = "categories"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -453,7 +473,7 @@ class Category(TimestampMixin, db.Model):
         }
 
 
-class Product(TimestampMixin, db.Model):
+class Product(TimestampMixin, Base):
     __tablename__ = "products"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -530,7 +550,7 @@ class Product(TimestampMixin, db.Model):
         }
 
 
-class StockMovement(db.Model):
+class StockMovement(Base):
     __tablename__ = "stock_movements"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -567,7 +587,7 @@ class StockMovement(db.Model):
         }
 
 
-class StockLayer(db.Model):
+class StockLayer(Base):
     """One FIFO cost layer: stock received at a known buying price.
 
     Sales consume the oldest layers first, so cost of goods sold (and therefore
@@ -605,7 +625,7 @@ class StockLayer(db.Model):
         }
 
 
-class Supplier(TimestampMixin, db.Model):
+class Supplier(TimestampMixin, Base):
     __tablename__ = "suppliers"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -632,7 +652,7 @@ class Supplier(TimestampMixin, db.Model):
         }
 
 
-class Customer(TimestampMixin, db.Model):
+class Customer(TimestampMixin, Base):
     __tablename__ = "customers"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -674,7 +694,7 @@ class Customer(TimestampMixin, db.Model):
         }
 
 
-class Discount(TimestampMixin, db.Model):
+class Discount(TimestampMixin, Base):
     __tablename__ = "discounts"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -727,7 +747,7 @@ class Discount(TimestampMixin, db.Model):
 # --------------------------------------------------------------------------- #
 # Selling
 # --------------------------------------------------------------------------- #
-class Sale(db.Model):
+class Sale(Base):
     __tablename__ = "sales"
     __table_args__ = (UniqueConstraint("company_id", "number", name="uq_sale_number"),)
 
@@ -817,7 +837,7 @@ class Sale(db.Model):
         return payload
 
 
-class SaleItem(db.Model):
+class SaleItem(Base):
     __tablename__ = "sale_items"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -857,7 +877,7 @@ class SaleItem(db.Model):
         }
 
 
-class SalePayment(db.Model):
+class SalePayment(Base):
     __tablename__ = "sale_payments"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -887,7 +907,7 @@ class SalePayment(db.Model):
         }
 
 
-class Refund(db.Model):
+class Refund(Base):
     __tablename__ = "refunds"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -919,7 +939,7 @@ class Refund(db.Model):
         }
 
 
-class RefundItem(db.Model):
+class RefundItem(Base):
     __tablename__ = "refund_items"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -941,7 +961,7 @@ class RefundItem(db.Model):
         }
 
 
-class HeldCart(TimestampMixin, db.Model):
+class HeldCart(TimestampMixin, Base):
     __tablename__ = "held_carts"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -963,7 +983,7 @@ class HeldCart(TimestampMixin, db.Model):
         }
 
 
-class Layby(TimestampMixin, db.Model):
+class Layby(TimestampMixin, Base):
     """Lay-by / layaway: deposit now, pay the balance over time."""
 
     __tablename__ = "laybys"
@@ -1036,7 +1056,7 @@ class Layby(TimestampMixin, db.Model):
         return payload
 
 
-class LaybyItem(db.Model):
+class LaybyItem(Base):
     __tablename__ = "layby_items"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1063,7 +1083,7 @@ class LaybyItem(db.Model):
         }
 
 
-class LaybyPayment(db.Model):
+class LaybyPayment(Base):
     __tablename__ = "layby_payments"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1091,7 +1111,7 @@ class LaybyPayment(db.Model):
         }
 
 
-class Shift(db.Model):
+class Shift(Base):
     __tablename__ = "shifts"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1135,7 +1155,7 @@ class Shift(db.Model):
 # --------------------------------------------------------------------------- #
 # Governance
 # --------------------------------------------------------------------------- #
-class AuditLog(db.Model):
+class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1167,7 +1187,7 @@ class AuditLog(db.Model):
         }
 
 
-class Announcement(TimestampMixin, db.Model):
+class Announcement(TimestampMixin, Base):
     __tablename__ = "announcements"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1198,7 +1218,7 @@ class Announcement(TimestampMixin, db.Model):
 # --------------------------------------------------------------------------- #
 # Company authored features
 # --------------------------------------------------------------------------- #
-class CustomWorkspace(TimestampMixin, db.Model):
+class CustomWorkspace(TimestampMixin, Base):
     __tablename__ = "custom_workspaces"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1226,7 +1246,7 @@ class CustomWorkspace(TimestampMixin, db.Model):
         }
 
 
-class WorkspaceRecord(TimestampMixin, db.Model):
+class WorkspaceRecord(TimestampMixin, Base):
     __tablename__ = "workspace_records"
 
     id = db.Column(db.Integer, primary_key=True)
