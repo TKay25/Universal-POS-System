@@ -25,7 +25,8 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
         options = {
             key: value
             for key, value in (app.config.get("SQLALCHEMY_ENGINE_OPTIONS") or {}).items()
-            if key not in {"pool_size", "max_overflow", "pool_recycle", "pool_timeout"}
+            if key not in {"pool_size", "max_overflow", "pool_recycle", "pool_timeout",
+                           "pool_use_lifo", "connect_args"}
         }
         app.config["SQLALCHEMY_ENGINE_OPTIONS"] = options
 
@@ -142,7 +143,17 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
 
     @app.get("/healthz")
     def healthz():
-        return jsonify({"status": "ok", "service": "universal-pos"})
+        from app import dbhelper
+
+        payload = {"status": "ok", "service": "universal-pos", "pool": dbhelper.pool_status()}
+        # ``?db=1`` also talks to the database (Render's probe stays cheap by default).
+        if request.args.get("db"):
+            reachable = dbhelper.ping()
+            payload["database"] = "ok" if reachable else "unavailable"
+            if not reachable:
+                payload["status"] = "degraded"
+                return jsonify(payload), 503
+        return jsonify(payload)
 
     # ---- CLI -------------------------------------------------------------- #
     @app.cli.command("init-db")
@@ -189,5 +200,11 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
 
     with app.app_context():
         _bootstrap()
+        if not app.config.get("TESTING"):  # pragma: no cover - pool warm-up
+            from app import dbhelper
+
+            # The first requests of a cold worker would otherwise pay the TLS
+            # handshake and Postgres authentication each.
+            dbhelper.warm_pool(2)
 
     return app

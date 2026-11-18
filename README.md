@@ -37,6 +37,25 @@ POS_DATABASE_URL=postgresql://user:password@host/database
 `POS_SEED_DEMO=true` and the database is empty. Delete the SQLite file (or drop the
 Postgres tables) to reseed.
 
+#### Connection tuning (`app/dbhelper.py`)
+
+Postgres connections are pooled once per worker and reused. `app/dbhelper.py` exposes the
+pool and the fast paths:
+
+| Helper | Use it for |
+| --- | --- |
+| `fetch_all` / `fetch_one` / `fetch_value` | read-only SQL that does not need ORM objects (each SQL string is compiled once and cached) |
+| `insert_rows(Table, rows)` | bulk writes — one `executemany` round trip per 500 rows instead of one per row |
+| `session_scope()` | transactions outside a request (scripts, CLI) — commits on success, rolls back on error |
+| `retry_transient()` | decorator that retries a call when the socket dropped (deploys, idle timeouts) |
+| `warm_pool(2)` | opens connections at boot so the first request skips TLS + auth |
+| `pool_status()` / `ping()` | shown by `/healthz` (`/healthz?db=1` also queries the database) |
+
+Pool knobs (all optional): `POS_DB_POOL_SIZE` (5), `POS_DB_MAX_OVERFLOW` (10),
+`POS_DB_POOL_TIMEOUT` (30 s), `POS_DB_CONNECT_TIMEOUT` (10 s), `POS_DB_POOL_USE_LIFO`
+(`true` — reuses the busiest connection first), `POS_DB_APP_NAME` (`universal-pos`, shows
+in `pg_stat_activity`).
+
 ## Deploying to Render
 
 1. Push this repository to GitHub and create a **Web Service** on Render (or point Render at
@@ -71,6 +90,8 @@ Postgres tables) to reseed.
    | `POS_COOKIE_SECURE` | `true` (HTTPS only cookies) |
    | `POS_REPORT_CACHE_SECONDS` | how long report payloads/PDFs stay cached (default `60`, `0` disables) |
    | `POS_DB_PRE_PING` | `true` (default) — keep it on for Render Postgres |
+   | `POS_DB_POOL_USE_LIFO` | `true` (default) — reuse the hottest pooled connection first |
+   | `POS_DB_CONNECT_TIMEOUT` | seconds before a connection attempt fails (default `10`) |
 
    Leave `POS_DATABASE_URL` unset to fall back to SQLite (not recommended on Render).
    `postgres://`, `postgresql://` and `postgresql+psycopg://` URLs are all normalised to
@@ -276,6 +297,7 @@ normalisation, model constructors, PDF exports and developer flows.
 ```
 app/
   __init__.py        app factory, CLI, SPA fallback
+  dbhelper.py        pooled-connection helpers: raw SQL, bulk inserts, retries, pool stats
   models.py          tenant-scoped data model (typed `Base` declarative class)
   modules.py         module catalogue + config schemas
   defaults.py        permissions, default roles (Administrator, Manager, Cashier, Accountant)

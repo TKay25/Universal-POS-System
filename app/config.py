@@ -66,6 +66,16 @@ def _engine_options(url: str) -> dict:
     if not url.startswith("sqlite"):
         options["pool_size"] = int(os.environ.get("POS_DB_POOL_SIZE", "5"))
         options["max_overflow"] = int(os.environ.get("POS_DB_MAX_OVERFLOW", "10"))
+        # LIFO keeps the busiest connections warm instead of rotating the whole
+        # pool, so TLS/back-end setup is paid once rather than every N requests.
+        options["pool_use_lifo"] = _env_bool("POS_DB_POOL_USE_LIFO", True)
+        options["pool_timeout"] = int(os.environ.get("POS_DB_POOL_TIMEOUT", "30"))
+        options["connect_args"] = {
+            # Fail fast instead of hanging a worker on an unreachable database.
+            "connect_timeout": int(os.environ.get("POS_DB_CONNECT_TIMEOUT", "10")),
+            # Shows up in pg_stat_activity, which makes slow queries easy to trace.
+            "application_name": os.environ.get("POS_DB_APP_NAME", "universal-pos"),
+        }
     return options
 
 
