@@ -2603,3 +2603,16 @@ textarea.input, .textarea { border-radius: 12px; }
 /* Long labels never push a mobile card wider than the screen. */
 .mtable__head span, .mtable__row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mfeed__row, .mdownloads__row { min-width: 0; }
+
+/* ---------- inline icon sizing ------------------------------------------- */
+/* Icons inherit the local font size unless a component sizes them, so a bare
+   icon() call in a layout can never balloon to fill the container. */
+svg { flex: none; }
+.onboarding__step > svg { width: 15px; height: 15px; color: var(--text-3); }
+.onboarding__step:hover > svg { color: var(--text-2); }
+.onboarding__label { font-size: 12.8px; font-weight: 545; }
+.dropzone { display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; transition: border-color var(--speed), background var(--speed); }
+.dropzone svg { width: 26px; height: 26px; color: var(--text-3); }
+.dropzone:hover svg { color: var(--primary); }
+.inline-icon { display: inline-flex; align-items: center; margin-left: 4px; color: var(--warning); }
+.inline-icon svg { width: 12px; height: 12px; }

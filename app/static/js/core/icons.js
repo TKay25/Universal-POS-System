@@ -80,7 +80,9 @@ const TEMPLATE = document.createElement("template");
 
 export function iconHTML(name, extra = "") {
   const body = PATHS[name] || PATHS.dot;
-  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
+  // width/height default to 1em so an icon can never stretch to fill its parent;
+  // any CSS rule that sets a size still wins over these attributes.
+  return `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
 }
 
 export function icon(name, extra = "") {
@@ -134,7 +136,7 @@ export const PRODUCT_ICON_NAMES = Object.keys(PRODUCT_PATHS);
 
 export function productIconHTML(name = "box", cls = "product-icon") {
   const body = PRODUCT_PATHS[name] || PRODUCT_PATHS.box;
-  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  return `<svg class="${cls}" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 }
 
 export function productIcon(name = "box", cls = "product-icon") {
