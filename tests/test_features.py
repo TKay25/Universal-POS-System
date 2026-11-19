@@ -581,6 +581,15 @@ def test_low_stock_report_and_mobile_snapshot(client, owner):
     assert payload["rows"][0][5] == 5  # brings the shelf back to twice its low point
     assert payload["rows"][0][6] == 5 * product["cost_cents"]
 
+    # The stock tab also gets the shelf's worth: cost, expected sales and the margin.
+    valuation = payload["summary"]
+    inventory = client.get("/api/reports/inventory", headers=headers).get_json()
+    assert valuation["products"] == len(inventory["rows"]) == 2
+    assert valuation["cost_cents"] == sum(int(row[6]) for row in inventory["rows"])
+    assert valuation["retail_cents"] == sum(int(round(row[2] * row[5])) for row in inventory["rows"])
+    assert valuation["profit_cents"] == valuation["retail_cents"] - valuation["cost_cents"]
+    assert valuation["cost_cents"] == 5 * product["cost_cents"] + 90 * 8000
+
     # The report is gated on the inventory module, like the rest of the stock family.
     keys = {entry["key"] for entry in client.get("/api/reports/catalog", headers=headers).get_json()["reports"]}
     assert "low_stock" in keys

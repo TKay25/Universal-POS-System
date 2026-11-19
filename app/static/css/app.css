@@ -2007,40 +2007,9 @@ html[data-overlay] .auth { overflow: hidden; }
 .mcard__hint { font-size: 11px; color: var(--text-3); }
 .mcard__note { font-size: 11.5px; color: var(--text-2); line-height: 1.45; margin-top: 8px; }
 
-/* Three-up money strip: at cost, at retail and the margin between. */
-.mstats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-.mstat {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-  padding: 7px 8px;
-  border-radius: 11px;
-  background: var(--surface-2);
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-}
-.mstat__label {
-  font-size: 9.4px;
-  text-transform: uppercase;
-  letter-spacing: .06em;
-  font-weight: 660;
-  color: var(--text-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mstat__value {
-  font-size: 13.2px;
-  font-weight: 700;
-  letter-spacing: -.02em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mstat.is-good { background: var(--success-soft); border-color: transparent; }
-.mstat.is-good .mstat__value { color: var(--success); }
-.mstat.is-good .mstat__label { color: color-mix(in srgb, var(--success) 72%, var(--text-3)); }
+/* Money on the phone: label left, value right, one line each at any width. */
+.mval { font-variant-numeric: tabular-nums; }
+.mval--good { color: var(--success); }
 
 .mhero {
   padding: 16px;

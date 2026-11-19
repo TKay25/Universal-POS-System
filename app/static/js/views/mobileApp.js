@@ -480,21 +480,18 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     const summary = data.summary;
     if (summary && summary.products) {
       const margin = summary.retail_cents ? (summary.profit_cents / summary.retail_cents) * 100 : 0;
+      const moneyRow = (label, cents, good = false) => h("div", { class: "mrow" },
+        h("span", { class: "truncate" }, label),
+        h("span", { class: `num strong mval${good ? " mval--good" : ""}` }, money(cents)));
       body.appendChild(h("section", { class: "mcard" },
         h("div", { class: "mcard__head" },
           h("div", { class: "mcard__title" }, "Stock value"),
           h("span", { class: "mcard__hint" },
             `${number(summary.products, 0)} tracked · ${margin.toFixed(1)}% margin`)),
-        h("div", { class: "mstats" },
-          h("div", { class: "mstat" },
-            h("span", { class: "mstat__label" }, "At cost"),
-            h("span", { class: "mstat__value" }, money(summary.cost_cents))),
-          h("div", { class: "mstat" },
-            h("span", { class: "mstat__label" }, "Expected sales"),
-            h("span", { class: "mstat__value" }, money(summary.retail_cents))),
-          h("div", { class: "mstat is-good" },
-            h("span", { class: "mstat__label" }, "Expected profit"),
-            h("span", { class: "mstat__value" }, money(summary.profit_cents))))));
+        h("div", { class: "mrows" },
+          moneyRow("At cost", summary.cost_cents),
+          moneyRow("Expected sales", summary.retail_cents),
+          moneyRow("Expected profit", summary.profit_cents, summary.profit_cents > 0))));
     }
 
     const search = searchLoader(h("input", { class: "input", placeholder: "Search product, SKU or department…", value: state.stockSearch }));

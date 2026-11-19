@@ -386,7 +386,9 @@ the selected period and always opens on **Today**; tabs a role cannot see are hi
   receipt to open the full sale and **print the receipt**.
 - **Reports** — one-tap PDF/CSV downloads for Summary, Sales, Products, Low stock, Inventory
   valuation and Branches, always for the selected period.
-- **Stock** — everything at or below its low-stock point, with suggested order quantities.
+- **Stock** — what the shelves are worth today (**at cost**, **expected sales** at retail and the
+  **expected profit** between them, with the potential margin and product count), then
+  everything at or below its low-stock point with suggested order quantities.
 - **Activity** — the workspace audit feed.
 - Powered by `GET /api/reports/mobile` (six targeted queries, cached like the rest of the
   report family). The payload carries `advice` (tone, headline and up to two action lines)
