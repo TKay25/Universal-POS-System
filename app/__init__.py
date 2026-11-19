@@ -6,6 +6,7 @@ import os
 import time
 from pathlib import Path
 
+import click
 from flask import Flask, jsonify, render_template, request
 from sqlalchemy.exc import OperationalError
 from werkzeug.exceptions import HTTPException
@@ -19,7 +20,6 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config.from_object(config_object)
     app.config.update(overrides)
-
     # SQLite engines (tests, local demos) reject server-side pool arguments.
     if str(app.config.get("SQLALCHEMY_DATABASE_URI", "")).startswith("sqlite"):
         options = {
@@ -45,12 +45,13 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     from app.blueprints.developer import bp as developer_bp
     from app.blueprints.laybys import bp as laybys_bp
     from app.blueprints.reports import bp as reports_bp
+    from app.blueprints.report_delivery import bp as report_delivery_bp
     from app.blueprints.sales import bp as sales_bp
     from app.blueprints.workspaces import bp as workspaces_bp
 
     for blueprint in (
         auth_bp, activity_bp, company_bp, catalog_bp, sales_bp, laybys_bp, reports_bp, developer_bp,
-        workspaces_bp
+        report_delivery_bp, workspaces_bp
     ):
         app.register_blueprint(blueprint)
 
@@ -174,6 +175,22 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
         created = seed_all(app)
         print(created)
 
+    @app.cli.command("send-executive-reports")
+    @click.option("--force", is_flag=True, help="Send even if today's report already went out.")
+    @click.option("--dry-run", is_flag=True, help="Build and print without sending.")
+    def send_executive_reports_command(force: bool, dry_run: bool):  # pragma: no cover - CLI helper
+        """Send the 6pm executive summary to every due company (idempotent)."""
+        from app.services.daily_reports import dispatch_due
+
+        results = dispatch_due(force=force, dry_run=dry_run)
+        for result in results:
+            print(f"{result.get('company')}: {result.get('status')} ({result.get('reason', 'ok')})")
+            if dry_run and result.get("text"):
+                print(result["text"])
+                print("-" * 60)
+        if not results:
+            print("No company is due for a report right now.")
+
     def _bootstrap():
         """Create the schema (and demo data) tolerating a slow/transient database."""
         last_error = None
@@ -211,5 +228,10 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
             # The first requests of a cold worker would otherwise pay the TLS
             # handshake and Postgres authentication each.
             dbhelper.warm_pool(2)
+
+    if app.config.get("DAILY_REPORT_SCHEDULER") and not app.config.get("TESTING"):
+        from app.services.daily_reports import start_scheduler
+
+        start_scheduler(app)
 
     return app

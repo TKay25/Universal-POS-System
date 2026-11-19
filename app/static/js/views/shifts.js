@@ -4,6 +4,7 @@ import { h, clear, debounce } from "../core/dom.js";
 import { icon } from "../core/icons.js";
 import { money, number, dateTime, date } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
+import { moduleConfig } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, table, badge, toast, alertBox, field, textarea, moneyInput,
   statCard, modal, statusBadge, pagination, emptyState, kvList, textInput,
@@ -147,6 +148,7 @@ export default async function shiftsView(ctx) {
       return;
     }
     const counted = moneyInput({ value: "" });
+    const countsRequired = moduleConfig("shifts").count_payments !== false;
     const notes = textarea({ rows: 2, placeholder: "Notes for the handover (optional)" });
     const errorHost = h("div");
     const variancePreview = h("div", { class: "change-due" }, h("span", {}, "Expected in drawer"), h("span", { class: "num" }, money(summary.expected_cash_cents || 0)));
@@ -161,7 +163,7 @@ export default async function shiftsView(ctx) {
           ["Cash refunds", money(summary.cash_refunds_cents || 0)],
           ["Expected", money(summary.expected_cash_cents || 0)],
         ])),
-        field({ label: "Counted cash", control: counted, hint: "Enter the exact amount you counted." }),
+        field({ label: "Counted cash", control: counted, hint: countsRequired ? "Required — enter the exact amount you counted." : "Optional." }),
         variancePreview,
         field({ label: "Notes", control: notes })),
       footer: [button("Cancel", { onClick: () => instance.close() }), button("Close drawer", { variant: "primary", onClick: async () => {

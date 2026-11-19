@@ -69,6 +69,10 @@ export function settings() {
   return getSession()?.company?.settings || {};
 }
 
+export function preferences() {
+  return getSession()?.preferences || {};
+}
+
 export function setting(section, key, fallback = null) {
   const value = settings()?.[section]?.[key];
   return value === undefined || value === null ? fallback : value;
@@ -78,22 +82,40 @@ export function currency() {
   return settings().currency || { code: "USD", symbol: "$", position: "before", decimals: 2 };
 }
 
+/* Readable text colour for a solid brand fill (tenant brands can be pale). */
+function readableOn(hex) {
+  const match = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!match) return "#ffffff";
+  let value = match[1];
+  if (value.length === 3) value = value.split("").map((c) => c + c).join("");
+  const channel = (offset) => parseInt(value.slice(offset, offset + 2), 16) / 255;
+  const linear = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const luminance = 0.2126 * linear(channel(0)) + 0.7152 * linear(channel(2)) + 0.0722 * linear(channel(4));
+  return luminance > 0.55 ? "#101322" : "#ffffff";
+}
+
 /* ---------- branding ------------------------------------------------------ */
 export function applyBranding() {
   const root = document.documentElement;
   const session = getSession();
   const branding = session?.company?.settings?.branding || {};
+  const prefs = session?.preferences || {};
   const primary = branding.primary || "#5b5bd6";
   const accent = branding.accent || "#22d3ee";
   const radius = Number(branding.radius ?? 14);
-  const density = branding.density || "comfortable";
+  const density = prefs.density || branding.density || "comfortable";
+  const theme = prefs.theme || branding.theme || "light";
 
   root.style.setProperty("--primary", primary);
   root.style.setProperty("--accent", accent);
+  root.style.setProperty("--on-primary", readableOn(primary));
   root.style.setProperty("--radius", `${radius}px`);
   root.style.setProperty("--radius-lg", `${Math.round(radius * 1.4)}px`);
   root.dataset.density = density;
-  root.dataset.theme = branding.theme === "dark" ? "dark" : "light";
+  root.dataset.theme = theme === "dark" ? "dark" : "light";
+  try {
+    window.localStorage.setItem("pos:theme", theme === "dark" ? "dark" : "light");
+  } catch { /* private mode: the next boot keeps the default theme */ }
   syncThemeColor();
 
   const logoText = branding.logo_text || session?.company?.name || "";
@@ -110,6 +132,10 @@ function syncThemeColor() {
 }
 
 export function setTheme(mode) {
-  document.documentElement.dataset.theme = mode === "dark" ? "dark" : "light";
+  const value = mode === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = value;
+  try {
+    window.localStorage.setItem("pos:theme", value);
+  } catch { /* private mode: the server preference still applies */ }
   syncThemeColor();
 }

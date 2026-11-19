@@ -328,3 +328,160 @@ def test_reports_round_trip_and_csv(client, owner):
     assert csv_response.status_code == 200
     assert csv_response.mimetype == "text/csv"
     assert "Total" in csv_response.data.decode("utf-8").splitlines()[0]
+
+
+# --------------------------------------------------------------------------- #
+# Personal preferences & toggle effects
+# --------------------------------------------------------------------------- #
+def test_preferences_are_saved_per_user(client, owner):
+    headers = owner["headers"]
+    saved = client.patch(
+        "/api/auth/preferences",
+        json={
+            "theme": "dark",
+            "density": "compact",
+            "sidebar": "expanded",
+            "dashboard_widgets": ["sales_today", "bogus_widget"],
+            "pos": {"sound_enabled": False},
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.get_json()
+    prefs = saved.get_json()["preferences"]
+    assert prefs["theme"] == "dark"
+    assert prefs["dashboard_widgets"] == ["sales_today"]
+    assert prefs["pos"]["sound_enabled"] is False
+    # Untouched keys keep their inherit-from-workspace default.
+    assert prefs["pos"]["auto_print"] is None
+
+    session = client.get("/api/auth/session").get_json()
+    assert session["preferences"]["theme"] == "dark"
+
+    roles = client.get("/api/company/roles", headers=headers).get_json()["items"]
+    cashier_role = next(role for role in roles if role["name"] == "Cashier")
+    client.post(
+        "/api/company/users",
+        json={"full_name": "Till User", "email": "till@test.dev", "password": "Password!1",
+              "role_id": cashier_role["id"]},
+        headers=headers,
+    )
+    cashier_headers = login(client, "till@test.dev", "Password!1")
+    cashier_session = client.get("/api/auth/session", headers=cashier_headers).get_json()
+    assert cashier_session["preferences"]["theme"] == ""
+    assert cashier_session["preferences"]["dashboard_widgets"] is None
+
+
+def test_preferences_reject_unknown_values(client, owner):
+    headers = owner["headers"]
+    bad_theme = client.patch("/api/auth/preferences", json={"theme": "neon"}, headers=headers)
+    assert bad_theme.status_code == 422
+    bad_pos = client.patch("/api/auth/preferences", json={"pos": {"sound_enabled": "loud"}}, headers=headers)
+    assert bad_pos.status_code == 422
+
+
+def test_price_override_switch_limits_the_till(client, owner):
+    headers = owner["headers"]
+    product_id = create_product(client, headers, price_cents=1000)
+    method = bootstrap(client)["payment_methods"][0]
+
+    def sell(unit_price_cents, pin=""):
+        return client.post(
+            "/api/sales",
+            json={
+                "lines": [{"product_id": product_id, "qty": 1, "unit_price_cents": unit_price_cents,
+                           "override_pin": pin}],
+                "payments": [{"method_id": method["id"], "amount_cents": unit_price_cents}],
+            },
+            headers=headers,
+        )
+
+    # Module off: a cheaper line price is refused outright.
+    assert sell(800).status_code == 422
+
+    client.patch(
+        "/api/company/modules/price_overrides",
+        json={"enabled": True, "config": {"max_percent_below": 20, "require_pin": False}},
+        headers=headers,
+    )
+    within_limit = sell(850)
+    assert within_limit.status_code == 201, within_limit.get_json()
+    assert within_limit.get_json()["item"]["items"][0]["unit_price_cents"] == 850
+
+    too_cheap = sell(500)
+    assert too_cheap.status_code == 422
+
+    # Requiring a PIN blocks anonymous overrides but accepts a supervisor PIN.
+    client.patch(
+        "/api/company/modules/price_overrides",
+        json={"config": {"require_pin": True}},
+        headers=headers,
+    )
+    assert sell(900).status_code == 422
+    owner_id = client.get("/api/auth/session").get_json()["user"]["id"]
+    client.patch(f"/api/company/users/{owner_id}", json={"pin": "2468"}, headers=headers)
+    assert sell(900, pin="2468").status_code == 201
+
+
+def test_tax_engine_and_store_credit_switches(client, owner):
+    headers = owner["headers"]
+    tax = client.post(
+        "/api/company/taxes", json={"name": "VAT 15", "rate": 15, "is_default": True}, headers=headers
+    ).get_json()["item"]
+    client.patch(
+        "/api/company/settings", json={"sales": {"default_tax_rate_id": tax["id"]}}, headers=headers
+    )
+    product_id = create_product(client, headers, price_cents=1000)
+    method = bootstrap(client)["payment_methods"][0]
+
+    with_tax = checkout(client, headers, product_id, method["id"], 1150)
+    assert with_tax.status_code == 201, with_tax.get_json()
+    assert with_tax.get_json()["item"]["tax_cents"] == 150
+
+    client.patch("/api/company/modules/tax_engine", json={"enabled": False}, headers=headers)
+    without_tax = checkout(client, headers, product_id, method["id"], 1000)
+    assert without_tax.status_code == 201, without_tax.get_json()
+    assert without_tax.get_json()["item"]["tax_cents"] == 0
+
+
+def test_manual_discount_switches_apply_to_line_discounts(client, owner):
+    headers = owner["headers"]
+    product_id = create_product(client, headers, price_cents=1000)
+    method = bootstrap(client)["payment_methods"][0]
+
+    def sell(discount_cents):
+        return client.post(
+            "/api/sales",
+            json={
+                "lines": [{"product_id": product_id, "qty": 1, "discount_cents": discount_cents}],
+                "payments": [{"method_id": method["id"], "amount_cents": 1000 - discount_cents}],
+            },
+            headers=headers,
+        )
+
+    client.patch(
+        "/api/company/modules/discounts",
+        json={"enabled": True, "config": {"allow_manual": True, "max_manual_percent": 10}},
+        headers=headers,
+    )
+    assert sell(100).status_code == 201
+    assert sell(500).status_code == 422
+
+    client.patch("/api/company/modules/discounts", json={"config": {"allow_manual": False}}, headers=headers)
+    assert sell(50).status_code == 422
+
+
+def test_shift_close_respects_the_count_switch(client, owner):
+    headers = owner["headers"]
+    shift = client.post("/api/shifts/open", json={"opening_float": "10.00"}, headers=headers).get_json()["item"]
+
+    missing = client.post(f"/api/shifts/{shift['id']}/close", json={}, headers=headers)
+    assert missing.status_code == 422
+
+    counted = client.post(f"/api/shifts/{shift['id']}/close", json={"counted_cash": 10}, headers=headers)
+    assert counted.status_code == 200, counted.get_json()
+
+    client.patch("/api/company/modules/shifts", json={"config": {"count_payments": False}}, headers=headers)
+    second = client.post("/api/shifts/open", json={"opening_float": "0.00"}, headers=headers).get_json()["item"]
+    without_count = client.post(f"/api/shifts/{second['id']}/close", json={}, headers=headers)
+    assert without_count.status_code == 200, without_count.get_json()
+

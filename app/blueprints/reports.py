@@ -467,7 +467,7 @@ def export_report_pdf(key: str):
 
 
 def _build_report_pdf(company, key, start, end, location_id) -> bytes:
-    from app.services.pdf import render_report_pdf
+    from app.services.pdf import chart_palette, render_report_pdf
 
     definition, rows = build_report(company, key, start, end)
     if definition is None:
@@ -475,6 +475,7 @@ def _build_report_pdf(company, key, start, end, location_id) -> bytes:
 
     settings = company.settings or {}
     symbol = (settings.get("currency") or {}).get("symbol", "$")
+    palette = chart_palette(company)
     truncated = len(rows) > PDF_ROW_LIMIT
     table_rows = rows[:PDF_ROW_LIMIT]
     columns = _column_weights(definition["columns"], table_rows, symbol)
@@ -511,14 +512,14 @@ def _build_report_pdf(company, key, start, end, location_id) -> bytes:
                 "title": "Revenue and profit trend",
                 "labels": [row["date"][5:] for row in series],
                 "series": [
-                    {"name": "Revenue", "color": "#5b5bd6",
+                    {"name": "Revenue", "color": palette[0],
                      "values": [round((row.get("sales_cents") or 0) / 100) for row in series]},
                     {"name": "Profit", "color": "#0f9d58",
                      "values": [round((row.get("profit_cents") or 0) / 100) for row in series]},
                 ],
             })
 
-        second = _second_chart(key, table_rows, columns, data, symbol)
+        second = _second_chart(key, table_rows, columns, data, symbol, palette)
         if second:
             charts.append(second)
     elif key == "low_stock":
@@ -540,7 +541,6 @@ def _build_report_pdf(company, key, start, end, location_id) -> bytes:
             groups[str(row[2])] = groups.get(str(row[2]), 0) + int(row[6] or 0)
         top = sorted(groups.items(), key=lambda item: item[1], reverse=True)[:6]
         if top:
-            palette = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#8b5cf6", "#0ea5e9"]
             charts.append({
                 "type": "bar",
                 "title": "Value on hand by department",
@@ -572,11 +572,9 @@ def _build_report_pdf(company, key, start, end, location_id) -> bytes:
     )
 
 
-def _second_chart(key, rows, columns, data, symbol):
+def _second_chart(key, rows, columns, data, symbol, palette):
     """The second chart packs the most useful comparison for that report."""
     from app.services.pdf import _money as pdf_money
-
-    palette = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#8b5cf6", "#0ea5e9"]
 
     def money_index():
         for index, column in enumerate(columns):

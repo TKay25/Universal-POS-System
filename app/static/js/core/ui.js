@@ -97,12 +97,22 @@ export function select({ value, options = [], name, id, onChange, disabled, plac
   return el;
 }
 
-export function switchControl({ checked = false, onChange, label, size = "", id } = {}) {
-  const input = h("input", { type: "checkbox", checked, id, onChange: (e) => onChange?.(e.target.checked, e) });
-  const el = h("label", { class: `switch${size === "lg" ? " switch--lg" : ""}` }, input,
+export function switchControl({ checked = false, onChange, label, size = "", id, disabled = false } = {}) {
+  const input = h("input", {
+    type: "checkbox",
+    checked,
+    id,
+    disabled,
+    onChange: (e) => onChange?.(e.target.checked, e),
+  });
+  const el = h("label", { class: `switch${size === "lg" ? " switch--lg" : ""}${disabled ? " is-disabled" : ""}` }, input,
     h("span", { class: "switch__track" }), label ? h("span", { class: "switch__label" }, label) : null);
   el.input = input;
   el.setChecked = (value) => { input.checked = Boolean(value); };
+  el.setDisabled = (value) => {
+    input.disabled = Boolean(value);
+    el.classList.toggle("is-disabled", Boolean(value));
+  };
   return el;
 }
 
@@ -132,12 +142,17 @@ export function segmented(items, { value, onChange, size } = {}) {
   return el;
 }
 
-export function switchRow({ title, hint, checked, onChange, disabled }) {
-  return h("div", { class: "switch-row" },
+export function switchRow({ title, hint, checked, onChange, disabled, id } = {}) {
+  const control = switchControl({ checked, onChange, disabled, id });
+  const el = h("div", { class: `switch-row${disabled ? " is-disabled" : ""}` },
     h("div", { class: "switch-row__text" },
       h("div", { class: "switch-row__title" }, title),
       hint ? h("div", { class: "switch-row__hint" }, hint) : null),
-    switchControl({ checked, onChange, disabled }));
+    control);
+  el.input = control.input;
+  el.setChecked = control.setChecked;
+  el.setDisabled = control.setDisabled;
+  return el;
 }
 
 export function tagInput({ values = [], placeholder = "Add…", onChange } = {}) {
@@ -266,14 +281,51 @@ export function emptyState({ icon: iconName = "box", title, text, action } = {})
     action || null);
 }
 
-export function loadingBlock(label = "Loading") {
-  return h("div", { class: "loading-block" },
-    h("div", { class: "spinner", attrs: { "aria-label": label } }));
+export function loadingBlock(label = "Loading", { compact = false } = {}) {
+  const block = (width) => h("div", { class: "skeleton", style: { width: `${width}%`, height: "10px" } });
+  if (compact) {
+    return h("div", { class: "loading-block", attrs: { role: "status", "aria-live": "polite" } },
+      h("span", { class: "sr-only" }, label),
+      h("div", { class: "page-skeleton page-skeleton--compact", attrs: { "aria-hidden": "true" } },
+        block(46), block(72), block(58), block(64)));
+  }
+  const card = () => h("div", { class: "page-skeleton__card" },
+    h("div", { class: "skeleton skeleton--label" }),
+    h("div", { class: "skeleton skeleton--value" }));
+  return h("div", { class: "loading-block", attrs: { role: "status", "aria-live": "polite" } },
+    h("span", { class: "sr-only" }, label),
+    h("div", { class: "page-skeleton", attrs: { "aria-hidden": "true" } },
+      h("div", { class: "page-skeleton__head" },
+        h("div", { class: "page-skeleton__titles" },
+          h("div", { class: "skeleton skeleton--title" }),
+          h("div", { class: "skeleton skeleton--sub" })),
+        h("div", { class: "page-skeleton__actions" },
+          h("div", { class: "skeleton skeleton--pill" }),
+          h("div", { class: "skeleton skeleton--pill" }))),
+      h("div", { class: "page-skeleton__grid" }, card(), card(), card(), card()),
+      h("div", { class: "page-skeleton__panel" },
+        h("div", { class: "skeleton skeleton--row" }),
+        h("div", { class: "skeleton skeleton--row" }),
+        h("div", { class: "skeleton skeleton--row" }),
+        h("div", { class: "skeleton skeleton--row" }))));
 }
 
 export function skeletonRows(count = 5) {
   return h("div", { style: { padding: "14px" } },
     Array.from({ length: count }, () => h("div", { class: "skeleton skeleton--line" })));
+}
+
+/* A compact skeleton for panels that sit under an existing toolbar. */
+export function skeletonCards({ cards = 4, rows = 4, label = "Loading" } = {}) {
+  const card = () => h("div", { class: "page-skeleton__card" },
+    h("div", { class: "skeleton skeleton--label" }),
+    h("div", { class: "skeleton skeleton--value" }));
+  return h("div", { class: "loading-block", attrs: { role: "status", "aria-live": "polite" } },
+    h("span", { class: "sr-only" }, label),
+    h("div", { class: "page-skeleton page-skeleton--compact", attrs: { "aria-hidden": "true" } },
+      h("div", { class: "page-skeleton__grid" }, Array.from({ length: cards }, card)),
+      h("div", { class: "page-skeleton__panel" },
+        Array.from({ length: rows }, () => h("div", { class: "skeleton skeleton--row" })))));
 }
 
 /* ---------- table --------------------------------------------------------- */
@@ -295,15 +347,26 @@ export function table({ columns, rows, empty = {}, onRowClick, loading = false, 
   tableEl.appendChild(h("thead", {}, head));
   const body = h("tbody");
   rows.forEach((row, index) => {
-    const tr = h("tr", { class: onRowClick ? "is-clickable" : "" });
+    const tr = h("tr", {
+      class: onRowClick ? "is-clickable" : "",
+      tabindex: onRowClick ? 0 : null,
+    });
     for (const col of columns) {
       const value = col.render ? col.render(row, index) : row[col.key];
       tr.appendChild(h("td", { class: col.align === "right" ? "num" : "" }, value));
     }
-    if (onRowClick) tr.addEventListener("click", (e) => {
-      if (e.target.closest("button, a, input, select, label")) return;
-      onRowClick(row, index);
-    });
+    if (onRowClick) {
+      tr.addEventListener("click", (e) => {
+        if (e.target.closest("button, a, input, select, label")) return;
+        onRowClick(row, index);
+      });
+      tr.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        if (e.target !== tr) return;
+        e.preventDefault();
+        onRowClick(row, index);
+      });
+    }
     body.appendChild(tr);
   });
   tableEl.appendChild(body);
@@ -325,6 +388,7 @@ export function pagination(meta, onPage) {
 
 /* ---------- overlays ------------------------------------------------------ */
 const overlayStack = [];
+let overlayUid = 0;
 
 /* While a dialog is open the page behind it must not move; only the dialog
    body scrolls. */
@@ -334,6 +398,12 @@ function syncOverlayLock() {
   else delete root.dataset.overlay;
 }
 
+function focusables(root) {
+  return [...root.querySelectorAll(
+    'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+  )].filter((el) => el.getClientRects().length > 0);
+}
+
 function pushOverlay(entry) {
   overlayStack.push(entry);
   syncOverlayLock();
@@ -341,6 +411,20 @@ function pushOverlay(entry) {
     if (e.key === "Escape" && entry.dismissible) {
       e.stopPropagation();
       entry.close();
+      return;
+    }
+    if (e.key !== "Tab" || !entry.trap) return;
+    const items = focusables(entry.trap);
+    if (!items.length) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || !entry.trap.contains(active))) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !entry.trap.contains(active))) {
+      e.preventDefault();
+      first.focus();
     }
   };
   entry.keyHandler = onKey;
@@ -352,6 +436,12 @@ function popOverlay(entry) {
   if (index >= 0) overlayStack.splice(index, 1);
   syncOverlayLock();
   document.removeEventListener("keydown", entry.keyHandler);
+}
+
+/* Give focus back to whatever opened the dialog once it closes. */
+function restoreFocusTo(opener) {
+  if (!(opener instanceof HTMLElement) || !opener.isConnected) return;
+  opener.focus({ preventScroll: true });
 }
 
 /* Footer primary actions submit asynchronously; show a spinner until the modal
@@ -380,11 +470,15 @@ function autoSpinFooter(footEl, bodyEl, isClosed) {
 
 export function modal({ title, subtitle, body, footer, size = "md", dismissible = true, onClose, icon: iconName } = {}) {
   const overlay = h("div", { class: "overlay" });
-  const dialog = h("div", { class: `modal modal--${size}`, attrs: { role: "dialog", "aria-modal": "true" } });
+  const titleId = `modal-title-${++overlayUid}`;
+  const dialog = h("div", {
+    class: `modal modal--${size}`,
+    attrs: { role: "dialog", "aria-modal": "true", "aria-labelledby": titleId },
+  });
   const head = h("header", { class: "modal__head" },
     iconName ? h("div", { class: "module-card__icon" }, icon(iconName)) : null,
     h("div", { class: "grow" },
-      h("div", { class: "modal__title" }, title),
+      h("div", { class: "modal__title", id: titleId }, title),
       subtitle ? h("div", { class: "modal__sub" }, subtitle) : null),
     h("div", { class: "modal__close" }, iconButton("x", { onClick: () => close(), title: "Close" })));
   const bodyEl = h("div", { class: "modal__body" }, body);
@@ -394,9 +488,11 @@ export function modal({ title, subtitle, body, footer, size = "md", dismissible 
   if (footEl) dialog.appendChild(footEl);
   overlay.appendChild(dialog);
 
+  const opener = document.activeElement;
   let closed = false;
   const entry = {
     dismissible,
+    trap: dialog,
     close: () => close(),
   };
   function close() {
@@ -404,6 +500,7 @@ export function modal({ title, subtitle, body, footer, size = "md", dismissible 
     closed = true;
     popOverlay(entry);
     overlay.remove();
+    restoreFocusTo(opener);
     onClose?.();
   }
   autoSpinFooter(footEl, bodyEl, () => closed);
@@ -421,10 +518,14 @@ export function modal({ title, subtitle, body, footer, size = "md", dismissible 
 
 export function drawer({ title, subtitle, body, footer, size = "", dismissible = true, onClose } = {}) {
   const overlay = h("div", { class: "overlay drawer-overlay" });
-  const panel = h("aside", { class: `drawer${size ? ` drawer--${size}` : ""}` });
+  const titleId = `drawer-title-${++overlayUid}`;
+  const panel = h("aside", {
+    class: `drawer${size ? ` drawer--${size}` : ""}`,
+    attrs: { role: "dialog", "aria-modal": "true", "aria-labelledby": titleId },
+  });
   panel.appendChild(h("header", { class: "drawer__head" },
     h("div", { class: "grow" },
-      h("div", { class: "modal__title" }, title),
+      h("div", { class: "modal__title", id: titleId }, title),
       subtitle ? h("div", { class: "modal__sub" }, subtitle) : null),
     iconButton("x", { onClick: () => close(), title: "Close" })));
   const bodyEl = h("div", { class: "drawer__body" }, body);
@@ -432,13 +533,15 @@ export function drawer({ title, subtitle, body, footer, size = "", dismissible =
   if (footer) panel.appendChild(h("footer", { class: "drawer__foot" }, footer));
   overlay.appendChild(panel);
 
+  const opener = document.activeElement;
   let closed = false;
-  const entry = { dismissible, close: () => close() };
+  const entry = { dismissible, trap: panel, close: () => close() };
   function close() {
     if (closed) return;
     closed = true;
     popOverlay(entry);
     overlay.remove();
+    restoreFocusTo(opener);
     onClose?.();
   }
   overlay.addEventListener("mousedown", (e) => {
@@ -482,28 +585,50 @@ export function toast(message, type = "success", title = "") {
     document.body.appendChild(host);
   }
   const iconName = { success: "check", error: "warn", warning: "warn", info: "info" }[type] || "info";
-  const el = h("div", { class: `toast toast--${type}` },
+  const duration = type === "error" ? 7000 : 4200;
+  const timerBar = h("span", {
+    class: "toast__timer",
+    style: { animationDuration: `${duration}ms` },
+    attrs: { "aria-hidden": "true" },
+  });
+  const el = h("div", { class: `toast toast--${type}`, attrs: { role: type === "error" ? "alert" : "status" } },
     h("span", { class: "toast__icon" }, icon(iconName)),
     h("div", { class: "grow" },
       title ? h("div", { class: "toast__title" }, title) : null,
       h("div", { class: "toast__msg" }, message)),
-    iconButton("x", { size: "sm", variant: "ghost", onClick: () => remove() }));
+    iconButton("x", { size: "sm", variant: "ghost", onClick: () => remove(), title: "Dismiss" }),
+    timerBar);
   function remove() {
     el.classList.add("is-out");
     setTimeout(() => el.remove(), 180);
   }
+  // Hovering pauses the dismissal so a longer message can be read.
+  let startedAt = Date.now();
+  let remaining = duration;
+  let timeout = setTimeout(remove, duration);
+  el.addEventListener("mouseenter", () => {
+    clearTimeout(timeout);
+    remaining = Math.max(600, remaining - (Date.now() - startedAt));
+    timerBar.style.animationPlayState = "paused";
+  });
+  el.addEventListener("mouseleave", () => {
+    startedAt = Date.now();
+    timeout = setTimeout(remove, remaining);
+    timerBar.style.animationPlayState = "running";
+  });
   host.appendChild(el);
-  setTimeout(remove, type === "error" ? 7000 : 4200);
+  // Keep the stack short so toasts never cover the till.
+  while (host.children.length > 4) host.firstElementChild.remove();
   return el;
 }
 
 export function menu(anchor, items) {
   const existing = document.querySelector(".menu");
   if (existing) existing.remove();
-  const el = h("div", { class: "menu" });
+  const el = h("div", { class: "menu", attrs: { role: "menu" } });
   for (const item of items) {
     if (item === "-") {
-      el.appendChild(h("div", { class: "menu__sep" }));
+      el.appendChild(h("div", { class: "menu__sep", attrs: { role: "separator" } }));
       continue;
     }
     if (item.label && item.header) {
@@ -513,6 +638,7 @@ export function menu(anchor, items) {
     el.appendChild(h("button", {
       class: `menu__item${item.danger ? " menu__item--danger" : ""}`,
       type: "button",
+      attrs: { role: "menuitem" },
       onClick: () => {
         el.remove();
         item.onClick?.();
@@ -534,9 +660,31 @@ export function menu(anchor, items) {
     if (!el.contains(e.target)) {
       el.remove();
       document.removeEventListener("mousedown", dismiss);
+      restoreFocusTo(anchor);
     }
   };
   setTimeout(() => document.addEventListener("mousedown", dismiss), 0);
+
+  const menuItems = [...el.querySelectorAll(".menu__item")];
+  let index = -1;
+  const focusAt = (next) => {
+    if (!menuItems.length) return;
+    index = (next + menuItems.length) % menuItems.length;
+    menuItems[index].focus();
+  };
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); focusAt(index + 1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); focusAt(index - 1); }
+    else if (e.key === "Home") { e.preventDefault(); focusAt(0); }
+    else if (e.key === "End") { e.preventDefault(); focusAt(menuItems.length - 1); }
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      el.remove();
+      document.removeEventListener("mousedown", dismiss);
+      restoreFocusTo(anchor);
+    }
+  });
+  setTimeout(() => menuItems[0]?.focus(), 20);
   return el;
 }
 

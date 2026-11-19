@@ -5,12 +5,13 @@ import { icon } from "./core/icons.js";
 import { money, dateTime, initials, timeZone } from "./core/fmt.js";
 import {
   store, applyBranding, getSession, isAuthed, isDeveloper, impersonating, moduleOn,
-  hasPerm, hasAny, companyName, currentUser, currentCompany, setTheme,
+  hasPerm, hasAny, companyName, currentUser, currentCompany, preferences,
 } from "./core/store.js";
+import { toggleThemePreference, savePreferences } from "./core/prefs.js";
 import { api, get, post } from "./core/http.js";
 import { tabs } from "./core/tabs.js";
 import { createRouter } from "./core/router.js";
-import { initPwa, installApp, isStandalone } from "./core/pwa.js";
+import { initPwa, installApp, isStandalone, canInstall } from "./core/pwa.js";
 import {
   button, iconButton, avatar, modal, drawer, toast, menu, field, textInput, switchRow,
   alertBox, sectionCard, badge,
@@ -144,6 +145,7 @@ const routes = [
     view: "activity",
     title: () => "Activity log",
     icon: "list",
+    module: "audit_log",
     perm: "audit.view",
     deniedMessage: "Only administrators can read the activity log.",
   },
@@ -153,9 +155,7 @@ const routes = [
     view: "settings",
     title: () => "Workspace settings",
     icon: "settings",
-    perm: "settings.manage",
-    deniedMessage: "Only workspace administrators can open settings.",
-    allowedAlso: ["users.manage", "audit.view"],
+    deniedMessage: "Sign in to a workspace to open settings.",
   },
   {
     match: /^\/developer(?:\/(?<section>[a-z0-9-]+))?\/?$/,
@@ -192,10 +192,12 @@ const FULL_APP_KEY = "pos:full-app";
 const SIDEBAR_KEY = "pos:sidebar";
 
 function sidebarMode() {
+  const saved = preferences().sidebar;
+  if (saved === "expanded" || saved === "collapsed") return saved;
   try {
-    return window.localStorage.getItem(SIDEBAR_KEY) === "expanded" ? "expanded" : "collapsed";
+    return window.localStorage.getItem(SIDEBAR_KEY) === "collapsed" ? "collapsed" : "expanded";
   } catch {
-    return "collapsed";
+    return "expanded";
   }
 }
 
@@ -211,7 +213,29 @@ function applySidebarMode(mode) {
 }
 
 function toggleSidebarMode() {
-  applySidebarMode(document.documentElement.dataset.sidebar === "collapsed" ? "expanded" : "collapsed");
+  const next = document.documentElement.dataset.sidebar === "collapsed" ? "expanded" : "collapsed";
+  applySidebarMode(next);
+  savePreferences({ sidebar: next }).catch(() => { /* offline: the browser keeps the choice */ });
+}
+
+function themeIconName() {
+  return document.documentElement.dataset.theme === "dark" ? "sun" : "moon";
+}
+
+function themeActionLabel() {
+  return document.documentElement.dataset.theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
+}
+
+async function flipTheme(buttonEl) {
+  try {
+    const next = await toggleThemePreference();
+    if (buttonEl) {
+      buttonEl.replaceChildren(icon(next === "dark" ? "sun" : "moon"));
+      buttonEl.title = next === "dark" ? "Switch to light theme" : "Switch to dark theme";
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  }
 }
 
 function fullAppPreferred() {
@@ -337,6 +361,8 @@ function renderAuth(message = "") {
   destroyMobile();
   shellEl = null;
   shellMode = "";
+  // Drop any tenant branding so the sign-in screen uses the product palette.
+  applyBranding();
   clear(root);
   root.appendChild(loginView({
     initialError: message,
@@ -400,7 +426,7 @@ function navModel() {
   const ops = [];
   if (moduleOn("reports") && hasPerm("reports.view")) ops.push({ label: "Reports", path: "/reports", icon: "chart" });
   if (moduleOn("shifts") && hasPerm("shifts.manage")) ops.push({ label: "Cash drawer", path: "/shifts", icon: "clock" });
-  if (hasPerm("audit.view")) ops.push({ label: "Activity log", path: "/activity", icon: "list" });
+  if (moduleOn("audit_log") && hasPerm("audit.view")) ops.push({ label: "Activity log", path: "/activity", icon: "list" });
   if (ops.length) groups.push({ label: "Insights", items: ops });
 
   const admin = [];
@@ -430,10 +456,15 @@ function renderShell() {
 
   const sidebar = h("aside", { class: "sidebar" });
   const topbar = h("header", { class: "topbar" });
-  const tabbar = h("nav", { class: "tabbar" });
-  const viewsHost = h("div", { class: "views" });
+  const tabbar = h("div", { class: "tabbar", attrs: { role: "tablist", "aria-label": "Open views" } });
+  const viewsHost = h("div", { class: "views", attrs: { id: "main-content", role: "main", tabindex: "-1" } });
   const main = h("div", { class: "main" }, topbar, tabbar, viewsHost);
-  shellEl = h("div", { class: "app" }, sidebar, main);
+  const skipLink = h("button", {
+    class: "skip-link",
+    type: "button",
+    onClick: () => viewsHost.focus(),
+  }, "Skip to content");
+  shellEl = h("div", { class: "app" }, skipLink, sidebar, main);
   root.appendChild(shellEl);
 
   renderSidebar(sidebar);
@@ -487,7 +518,7 @@ function renderSidebar(sidebar) {
       h("div", { class: "brand__sub" }, isDeveloper() && !impersonating() ? "Platform console" : company?.plan ? `${company.plan} plan` : "Workspace")));
   sidebar.appendChild(brand);
 
-  const nav = h("div", { class: "nav" });
+  const nav = h("nav", { class: "nav", attrs: { "aria-label": "Primary" } });
   const groups = navModel();
   for (const group of groups) {
     if (group.label) nav.appendChild(h("div", { class: "nav__label" }, group.label));
@@ -583,11 +614,11 @@ function renderTopbar(topbar) {
     icon("building"),
     h("span", { class: "topbar__company" }, company?.name || "Universal POS"));
   topbar.appendChild(h("div", { class: "topbar__lead" }, title, crumbs));
+  topbar.appendChild(h("div", { class: "topbar__spacer" }));
   topbar.appendChild(h("div", {
     class: "topbar__clock",
-    title: "Zimbabwe time (Africa/Harare)",
+    title: `${timeZone()} time`,
   }, h("span", { class: "topbar__clock-time" }, ""), h("span", { class: "topbar__clock-date" }, "")));
-  topbar.appendChild(h("div", { class: "topbar__spacer" }));
 
   const search = h("button", { class: "searchbox", type: "button", onClick: openPalette, title: "Search (Ctrl+K)" },
     icon("search"), h("span", {}, "Search or jump to…"), h("kbd", {}, navigator.platform.includes("Mac") ? "⌘K" : "Ctrl K"));
@@ -602,18 +633,32 @@ function renderTopbar(topbar) {
     topbar.appendChild(bell);
   }
 
-  const themeBtn = iconButton(document.documentElement.dataset.theme === "dark" ? "eye" : "palette", {
-    title: "Toggle theme",
-    onClick: () => {
-      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      setTheme(next);
-      themeBtn.replaceChildren(icon(next === "dark" ? "eye" : "palette"));
-    },
+  if (!isStandalone() && canInstall()) {
+    const installBtn = button("Install", {
+      variant: "soft",
+      size: "sm",
+      icon: "download",
+      title: "Install Universal POS",
+      onClick: () => installApp(),
+    });
+    installBtn.classList.add("topbar__install");
+    topbar.appendChild(installBtn);
+  }
+
+  const themeBtn = iconButton(themeIconName(), {
+    title: themeActionLabel(),
+    onClick: () => flipTheme(themeBtn),
   });
   topbar.appendChild(themeBtn);
 
   if (hasPerm("pos.sell") && currentCompany()) {
-    topbar.appendChild(button("New sale", { variant: "primary", size: "sm", icon: "plus", onClick: () => router?.go("/pos") }));
+    topbar.appendChild(button("New sale", {
+      variant: "primary",
+      size: "sm",
+      icon: "plus",
+      title: "Start a new sale",
+      onClick: () => router?.go("/pos"),
+    }));
   }
   if (!narrow) {
     const collapse = iconButton(sidebarMode() === "collapsed" ? "chevronRight" : "chevronLeft", {
@@ -687,6 +732,8 @@ function markActiveNav(sidebar, tab) {
     const target = item.dataset.path || "";
     const active = target === path || (target !== "/dashboard" && path.startsWith(`${target}/`));
     item.classList.toggle("is-active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
   });
 }
 
@@ -697,8 +744,9 @@ function openUserMenu(anchor) {
   const user = currentUser();
   const items = [
     { label: user.full_name, header: true },
+    { label: "Your preferences", icon: "sliders", onClick: () => router?.go("/settings/preferences") },
     { label: "Change password", icon: "key", onClick: openPasswordModal },
-    { label: "Toggle theme", icon: "palette", onClick: () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark") },
+    { label: themeActionLabel(), icon: themeIconName(), onClick: () => flipTheme() },
   ];
   if (isDeveloper()) {
     items.push("-");
@@ -795,6 +843,7 @@ function openPalette() {
         actions.push({ label: workspace.name, hint: "Workspace", icon: workspace.icon || "sparkles",
           run: () => router?.go(`/workspaces/${workspace.id}`) });
       }
+      render();
     }).catch(() => {});
   }
   actions.push(
@@ -808,30 +857,61 @@ function openPalette() {
     { label: "Sign out", hint: "Account", icon: "logout", run: signOut },
   );
 
-  const input = h("input", { class: "palette__input", placeholder: "Search screens and actions…" });
-  const list = h("div", { class: "palette__list" });
+  const input = h("input", {
+    class: "palette__input",
+    placeholder: "Search screens and actions…",
+    attrs: {
+      "aria-label": "Search screens and actions",
+      role: "combobox",
+      "aria-expanded": "true",
+      "aria-controls": "palette-list",
+      autocomplete: "off",
+      spellcheck: "false",
+    },
+  });
+  const list = h("div", {
+    class: "palette__list",
+    attrs: { id: "palette-list", role: "listbox", "aria-label": "Results" },
+  });
   let filtered = actions;
   let cursor = 0;
+  const opener = document.activeElement;
 
   const overlay = h("div", { class: "overlay palette-overlay" });
-  const panel = h("div", { class: "palette" }, input, list);
+  const panel = h("div", {
+    class: "palette",
+    attrs: { role: "dialog", "aria-modal": "true", "aria-label": "Search and jump" },
+  });
+  panel.appendChild(h("div", { class: "palette__search" },
+    icon("search"),
+    input,
+    h("kbd", { class: "palette__esc", attrs: { "aria-hidden": "true" } }, "Esc")));
+  panel.appendChild(list);
+  panel.appendChild(h("div", { class: "palette__footer", attrs: { "aria-hidden": "true" } },
+    h("span", {}, h("kbd", {}, "↑"), h("kbd", {}, "↓"), " navigate"),
+    h("span", {}, h("kbd", {}, "↵"), " open"),
+    h("span", {}, h("kbd", {}, "Esc"), " close")));
   overlay.appendChild(panel);
 
   function render() {
     clear(list);
+    input.setAttribute("aria-activedescendant", filtered.length ? `palette-item-${cursor}` : "");
     if (!filtered.length) {
-      list.appendChild(h("div", { class: "palette__empty" }, "No matches"));
+      list.appendChild(h("div", { class: "palette__empty", attrs: { role: "status" } }, "No matches. Try a screen name or action."));
       return;
     }
     filtered.forEach((action, index) => {
       const row = h("button", {
         class: `palette__item${index === cursor ? " is-active" : ""}`,
         type: "button",
+        id: `palette-item-${index}`,
+        attrs: { role: "option", "aria-selected": index === cursor ? "true" : "false" },
         onClick: () => run(action),
         onMouseEnter: () => { cursor = index; render(); },
       }, icon(action.icon || "dot"), h("span", { class: "grow" }, action.label), h("span", { class: "palette__hint" }, action.hint));
       list.appendChild(row);
     });
+    list.children[cursor]?.scrollIntoView({ block: "nearest" });
   }
 
   function run(action) {
@@ -842,12 +922,15 @@ function openPalette() {
   function close() {
     overlay.remove();
     document.removeEventListener("keydown", onKey, true);
+    if (opener instanceof HTMLElement && opener.isConnected) opener.focus({ preventScroll: true });
   }
 
   function onKey(e) {
     if (e.key === "Escape") { e.preventDefault(); close(); return; }
     if (e.key === "ArrowDown") { e.preventDefault(); cursor = Math.min(filtered.length - 1, cursor + 1); render(); }
     if (e.key === "ArrowUp") { e.preventDefault(); cursor = Math.max(0, cursor - 1); render(); }
+    if (e.key === "Home") { e.preventDefault(); cursor = 0; render(); }
+    if (e.key === "End") { e.preventDefault(); cursor = Math.max(0, filtered.length - 1); render(); }
     if (e.key === "Enter") { e.preventDefault(); if (filtered[cursor]) run(filtered[cursor]); }
   }
 
@@ -899,6 +982,28 @@ window.addEventListener("pos:signed-out", () => {
 export function remountShell() {
   if (isAuthed()) renderShell();
 }
+
+window.addEventListener("pos:preferences-changed", () => {
+  applySidebarMode(sidebarMode());
+  const themeBtn = shellEl?.querySelector('.topbar [title^="Switch to"]');
+  if (themeBtn) {
+    themeBtn.replaceChildren(icon(themeIconName()));
+    themeBtn.title = themeActionLabel();
+  }
+});
+
+window.addEventListener("pos:install-available", () => {
+  if (!shellEl || shellMode !== "desktop") return;
+  const topbar = shellEl.querySelector(".topbar");
+  if (topbar) renderTopbar(topbar);
+});
+
+window.addEventListener("pos:installed", () => {
+  toast("Universal POS is installed. Launch it from your desktop or home screen.", "success", "Installed");
+  if (!shellEl || shellMode !== "desktop") return;
+  const topbar = shellEl.querySelector(".topbar");
+  if (topbar) renderTopbar(topbar);
+});
 
 window.addEventListener("pos:branding-changed", () => {
   if (!shellEl) return;

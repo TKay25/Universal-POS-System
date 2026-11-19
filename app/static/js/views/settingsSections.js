@@ -5,19 +5,40 @@ import { icon } from "../core/icons.js";
 import { money, number, date, dateTime, isoDay } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import {
-  store, getSession, companyName, currentCompany, hasAny, moduleOn, moduleConfig, settings, applyBranding,
+  store, getSession, companyName, currentCompany, hasAny, moduleOn, moduleConfig, settings, preferences,
+  applyBranding,
 } from "../core/store.js";
 import {
   sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput, textarea, select,
   switchControl, switchRow, modal, confirmDialog, formGrid, moneyInput, tagInput, emptyState, statusBadge,
   avatar, pagination, kvList, segmented,
 } from "../core/ui.js";
+import { savePreferences, rememberPreference, posPreference } from "../core/prefs.js";
 
 export const SECTION_RENDERERS = {};
 
 /* ------------------------------------------------------------------------- */
 /* Shared helpers                                                             */
 /* ------------------------------------------------------------------------- */
+function prefSwitch({ title, hint, checked, save, disabled = false }) {
+  const control = switchRow({
+    title,
+    hint,
+    checked,
+    disabled,
+    onChange: async (value) => {
+      try {
+        await save(value);
+        toast("Preference saved for your account.", "success");
+      } catch (error) {
+        control.setChecked(!value);
+        toast(error.message, "error");
+      }
+    },
+  });
+  return control;
+}
+
 async function refreshSession() {
   const session = await get("/auth/session");
   store.set({ session, csrf: session.csrf_token });
@@ -61,6 +82,170 @@ function row(title, hint) {
   return h("div", { class: "tiny dim", style: { textTransform: "uppercase", letterSpacing: ".1em", fontWeight: "650", margin: "12px 0 4px" } }, title || hint);
 }
 
+function moduleSwitch(key, title, hint) {
+  const control = switchRow({
+    title,
+    hint,
+    checked: moduleOn(key),
+    onChange: async (value) => {
+      try {
+        await saveModule(key, { enabled: value }, "");
+        toast(`${title} ${value ? "enabled" : "disabled"}.`, "success");
+      } catch (error) {
+        control.setChecked(!value);
+        toast(error.message, "error");
+      }
+    },
+  });
+  return control;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Personal preferences                                                       */
+/* ------------------------------------------------------------------------- */
+SECTION_RENDERERS.preferences = async (host) => {
+  const prefs = preferences();
+  const workspace = settings();
+  const branding = workspace.branding || {};
+  const posCfg = moduleConfig("pos");
+
+  const workspaceTheme = branding.theme === "dark" ? "dark" : "light";
+  const workspaceDensity = branding.density === "compact" ? "compact" : "comfortable";
+
+  const themeOn = prefSwitch({
+    title: "Dark mode",
+    hint: `This device only. The workspace default is ${workspaceTheme}.`,
+    checked: (prefs.theme || workspaceTheme) === "dark",
+    save: (value) => savePreferences({ theme: value ? "dark" : "light" }),
+  });
+
+  const densityOn = prefSwitch({
+    title: "Compact layout",
+    hint: `Tighter spacing for this account. The workspace default is ${workspaceDensity}.`,
+    checked: (prefs.density || workspaceDensity) === "compact",
+    save: (value) => savePreferences({ density: value ? "compact" : "comfortable" }),
+  });
+
+  const sidebarOn = prefSwitch({
+    title: "Start with the sidebar expanded",
+    hint: "Remembered for every device you sign in from.",
+    checked: document.documentElement.dataset.sidebar === "expanded",
+    save: (value) => {
+      rememberPreference("sidebar", value ? "expanded" : "collapsed");
+      return savePreferences({ sidebar: value ? "expanded" : "collapsed" });
+    },
+  });
+
+  const soundDefault = posCfg.sound_enabled !== false;
+  const autoPrintDefault = Boolean(posCfg.auto_print);
+  const canSell = hasAny("pos.sell");
+
+  const soundOn = prefSwitch({
+    title: "Scan and add sounds",
+    hint: canSell ? "Turn the beep off at this till only." : "You need the 'Sell at the POS' permission.",
+    checked: posPreference("sound_enabled", soundDefault),
+    disabled: !canSell,
+    save: (value) => savePreferences({ pos: { sound_enabled: value } }),
+  });
+
+  const autoPrintOn = prefSwitch({
+    title: "Print receipts automatically",
+    hint: canSell ? "Personal override for the workspace receipt setting." : "You need the 'Sell at the POS' permission.",
+    checked: posPreference("auto_print", autoPrintDefault),
+    disabled: !canSell,
+    save: (value) => savePreferences({ pos: { auto_print: value } }),
+  });
+
+  const resetPos = button("Follow the workspace again", {
+    variant: "ghost",
+    size: "sm",
+    onClick: async () => {
+      try {
+        const saved = await savePreferences({ pos: { sound_enabled: null, auto_print: null } });
+        const next = saved.pos || {};
+        soundOn.setChecked(next.sound_enabled === null || next.sound_enabled === undefined ? soundDefault : Boolean(next.sound_enabled));
+        autoPrintOn.setChecked(next.auto_print === null || next.auto_print === undefined ? autoPrintDefault : Boolean(next.auto_print));
+        toast("POS switches follow the workspace again.", "success");
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    },
+  });
+
+  host.appendChild(card("Look and feel", "Saved to your account, not the whole workspace",
+    h("div", { class: "col", style: { padding: "2px 0" } },
+      themeOn, densityOn, sidebarOn,
+      h("div", { class: "flex justify-end mt-2" },
+        button("Reset look and feel", {
+          variant: "ghost",
+          size: "sm",
+          onClick: async () => {
+            try {
+              await savePreferences({ theme: "", density: "", sidebar: "" });
+              themeOn.setChecked(workspaceTheme === "dark");
+              densityOn.setChecked(workspaceDensity === "compact");
+              sidebarOn.setChecked(false);
+              toast("Back to the workspace defaults.", "success");
+            } catch (error) {
+              toast(error.message, "error");
+            }
+          },
+        })))));
+
+  host.appendChild(card("Till switches", "Your own overrides on top of the workspace POS settings",
+    h("div", { class: "col", style: { padding: "2px 0" } },
+      soundOn, autoPrintOn,
+      h("div", { class: "flex justify-end mt-2" }, resetPos))));
+
+  const widgetsHost = h("div", { class: "col", style: { padding: "2px 0" } });
+  const catalog = getSession()?.dashboard_widgets || [];
+  const stored = preferences().dashboard_widgets;
+  const activeWidgets = new Set(Array.isArray(stored) ? stored : (workspace.dashboard?.widgets || []));
+
+  for (const widget of catalog) {
+    const control = switchRow({
+      title: widget.name,
+      hint: widget.size === "sm" ? "KPI tile" : "Panel",
+      checked: activeWidgets.has(widget.key),
+      onChange: async (value) => {
+        if (value) activeWidgets.add(widget.key);
+        else activeWidgets.delete(widget.key);
+        try {
+          await savePreferences({ dashboard_widgets: [...activeWidgets] });
+        } catch (error) {
+          control.setChecked(!value);
+          if (value) activeWidgets.delete(widget.key);
+          else activeWidgets.add(widget.key);
+          toast(error.message, "error");
+        }
+      },
+    });
+    widgetsHost.appendChild(control);
+  }
+
+  host.appendChild(card("Dashboard widgets", "Pick the panels you want to see first",
+    h("div", { class: "col gap-2" },
+      widgetsHost,
+      h("div", { class: "flex justify-end" },
+        button("Use the workspace dashboard", {
+          variant: "ghost",
+          size: "sm",
+          onClick: async () => {
+            try {
+              await savePreferences({ dashboard_widgets: null });
+              const fallback = new Set(workspace.dashboard?.widgets || []);
+              widgetsHost.querySelectorAll(".switch-row").forEach((rowEl, index) => {
+                const widget = catalog[index];
+                if (widget) rowEl.setChecked(fallback.has(widget.key));
+              });
+              toast("Showing the workspace dashboard again.", "success");
+            } catch (error) {
+              toast(error.message, "error");
+            }
+          },
+        })))));
+};
+
 /* ------------------------------------------------------------------------- */
 /* General                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -85,6 +270,11 @@ SECTION_RENDERERS.general = async (host) => {
   const taxNumber = textInput({ value: business.tax_number || "", placeholder: "VAT registration number" });
   const companyRegNumber = textInput({ value: business.company_reg_number || "", placeholder: "Company registration number" });
   const phone = textInput({ value: business.phone || "" });
+  const whatsapp = textInput({
+    value: business.whatsapp_number || "",
+    placeholder: "+263 77 123 4567",
+    attrs: { inputmode: "tel", autocomplete: "tel" },
+  });
   const email = textInput({ value: business.email || "" });
   const website = textInput({ value: business.website || "" });
   const address = textInput({ value: business.address || "" });
@@ -132,6 +322,7 @@ SECTION_RENDERERS.general = async (host) => {
         field({ label: "VAT registration number", control: taxNumber, hint: "ZIMRA VAT number, printed on receipts" }),
         field({ label: "Company registration number", control: companyRegNumber, hint: "Registrar of Companies number" }),
         field({ label: "Phone", control: phone }),
+        field({ label: "WhatsApp number", control: whatsapp, hint: "For the 6pm executive summary. Include the country code." }),
         field({ label: "Email", control: email }),
         field({ label: "Website", control: website }),
         field({ label: "City", control: city }),
@@ -143,6 +334,7 @@ SECTION_RENDERERS.general = async (host) => {
           legal_name: legalName.value.trim(), tax_number: taxNumber.value.trim(),
           company_reg_number: companyRegNumber.value.trim(),
           phone: phone.value.trim(), email: email.value.trim(), website: website.value.trim(),
+          whatsapp_number: whatsapp.value.trim(),
           address: address.value.trim(), city: city.value.trim(), country: country.value.trim(),
         },
       }, "Business details saved."))))));
@@ -518,14 +710,6 @@ SECTION_RENDERERS.pos = async (host) => {
   const sound = switchControl({ checked: cfg.sound_enabled !== false, label: "Play a sound when adding items" });
   const customerRequired = switchControl({ checked: Boolean(cfg.customer_required), label: "Require a customer on every sale" });
 
-  const tipsOn = switchControl({ checked: moduleOn("tips"), label: "" });
-  const notesOn = switchControl({ checked: moduleOn("order_notes"), label: "" });
-  const roundingOn = switchControl({ checked: moduleOn("rounding"), label: "" });
-  const serviceOn = switchControl({ checked: moduleOn("service_charge"), label: "" });
-  const holdersOn = switchControl({ checked: moduleOn("holders"), label: "" });
-  const overridesOn = switchControl({ checked: moduleOn("price_overrides"), label: "" });
-  const laybyOn = switchControl({ checked: moduleOn("layby"), label: "" });
-
   host.appendChild(card("Till layout", "What the cashier sees and how the grid behaves",
     h("div", { class: "col gap-4" },
       formGrid([
@@ -546,25 +730,15 @@ SECTION_RENDERERS.pos = async (host) => {
         },
       }, "Till layout saved."))))));
 
-  host.appendChild(card("Checkout extras", "Toggle the modules that change how a sale completes",
+  host.appendChild(card("Checkout extras", "Each switch saves the moment you flip it",
     h("div", { class: "col" },
-      switchRow({ title: "Tips", hint: "Let customers add a tip by percentage or amount.", checked: tipsOn.input.checked, onChange: (v) => { tipsOn.input.checked = v; } }),
-      switchRow({ title: "Item notes", hint: "Kitchen notes, gift wrap, special requests.", checked: notesOn.input.checked, onChange: (v) => { notesOn.input.checked = v; } }),
-      switchRow({ title: "Cash rounding", hint: "Round the total to the nearest increment.", checked: roundingOn.input.checked, onChange: (v) => { roundingOn.input.checked = v; } }),
-      switchRow({ title: "Service charge", hint: "Automatically add a percentage to each ticket.", checked: serviceOn.input.checked, onChange: (v) => { serviceOn.input.checked = v; } }),
-      switchRow({ title: "Held orders", hint: "Park a cart and resume it later.", checked: holdersOn.input.checked, onChange: (v) => { holdersOn.input.checked = v; } }),
-      switchRow({ title: "Price overrides", hint: "Allow trusted staff to edit a line price.", checked: overridesOn.input.checked, onChange: (v) => { overridesOn.input.checked = v; } }),
-      switchRow({ title: "Lay-by", hint: "Reserve goods on a deposit and collect instalments.", checked: laybyOn.input.checked, onChange: (v) => { laybyOn.input.checked = v; } }),
-      h("div", { class: "flex justify-end mt-3" }, saveButton("Apply extras", async () => {
-        await saveModule("tips", { enabled: tipsOn.input.checked }, "");
-        await saveModule("order_notes", { enabled: notesOn.input.checked }, "");
-        await saveModule("rounding", { enabled: roundingOn.input.checked }, "");
-        await saveModule("service_charge", { enabled: serviceOn.input.checked }, "");
-        await saveModule("holders", { enabled: holdersOn.input.checked }, "");
-        await saveModule("price_overrides", { enabled: overridesOn.input.checked }, "");
-        await saveModule("layby", { enabled: laybyOn.input.checked }, "");
-        toast("Checkout extras updated.", "success");
-      })))));
+      moduleSwitch("tips", "Tips", "Let customers add a tip by percentage or amount."),
+      moduleSwitch("order_notes", "Item notes", "Kitchen notes, gift wrap, special requests."),
+      moduleSwitch("rounding", "Cash rounding", "Round the total to the nearest increment."),
+      moduleSwitch("service_charge", "Service charge", "Automatically add a percentage to each ticket."),
+      moduleSwitch("holders", "Held orders", "Park a cart and resume it later."),
+      moduleSwitch("price_overrides", "Price overrides", "Let trusted staff edit a line price."),
+      moduleSwitch("layby", "Lay-by", "Reserve goods on a deposit and collect instalments."))));
 };
 
 /* ------------------------------------------------------------------------- */
@@ -1301,6 +1475,209 @@ SECTION_RENDERERS.users = async (host) => {
     h("div", { class: "col gap-3" },
       h("div", { class: "flex justify-end" }, addButton),
       listHost)));
+  await load();
+};
+
+/* ------------------------------------------------------------------------- */
+/* Report recipients                                                          */
+/* ------------------------------------------------------------------------- */
+SECTION_RENDERERS.reports = async (host) => {
+  const listHost = h("div");
+
+  async function load() {
+    clear(listHost);
+    const data = await get("/company/report-recipients");
+    const wa = data.whatsapp || {};
+    const connection = h("div", { class: "flex items-center gap-2 wrap" },
+      badge(wa.configured ? "WhatsApp connected" : "WhatsApp not connected", wa.configured ? "success" : "warning"),
+      h("span", { class: "tiny dim" },
+        wa.configured
+          ? `Sending from ${wa.business_number || "your business number"}.`
+          : "Add WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN to the server environment."));
+    const last = data.last_dispatch;
+    const lastLine = last
+      ? h("div", { class: "tiny dim" },
+        `Last delivery ${last.report_date}: ${last.status}`
+        + (last.delivered_count !== undefined ? ` · ${last.delivered_count} of ${last.recipient_count} delivered` : ""))
+      : h("div", { class: "tiny dim" }, "No delivery has run yet.");
+
+    listHost.appendChild(h("div", { class: "col gap-2" },
+      h("div", { class: "flex items-center justify-between gap-2 wrap" },
+        connection,
+        h("div", { class: "flex gap-2" },
+          button("Preview today's report", { size: "sm", icon: "eye", onClick: preview }),
+          button("Send now", { size: "sm", variant: "primary", icon: "whatsapp", onClick: sendNow }),
+          button("Add recipient", { size: "sm", variant: "primary", icon: "plus", onClick: () => openForm(null) }))),
+      lastLine));
+
+    listHost.appendChild(table({
+      rows: data.items,
+      empty: {
+        icon: "whatsapp",
+        title: "No report recipients yet",
+        text: "Add the owners or managers who should receive the 6pm executive summary.",
+      },
+      columns: [
+        {
+          key: "name", label: "Recipient",
+          render: (row) => h("div", { class: "flex items-center gap-2" },
+            avatar(row.name, "#0f9d58", "sm"),
+            h("div", {},
+              h("div", { class: "strong" }, row.name),
+              h("div", { class: "tiny dim" },
+                [row.role_label, row.email].filter(Boolean).join(" · ") || "WhatsApp only"))),
+        },
+        { key: "whatsapp_number", label: "WhatsApp", render: (row) => h("span", { class: "num small" }, row.whatsapp_number) },
+        {
+          key: "is_active", label: "Status",
+          render: (row) => (row.is_active ? badge("Receiving", "success") : badge("Paused", "warning")),
+        },
+        {
+          key: "last_sent_at", label: "Last report",
+          render: (row) => h("div", { class: "tiny" },
+            row.last_sent_at ? dateTime(row.last_sent_at) : h("span", { class: "dim" }, "Never"),
+            row.last_status ? h("div", { class: "tiny dim" }, row.last_status) : null),
+        },
+        {
+          key: "actions", label: "", align: "right",
+          render: (row) => h("div", { class: "table-actions" },
+            iconButton("whatsapp", {
+              size: "sm", variant: "ghost", title: "Send a test message",
+              onClick: async () => {
+                try {
+                  await post(`/company/report-recipients/${row.id}/test`, {});
+                  toast(`Test message sent to ${row.name}.`, "success");
+                } catch (error) {
+                  toast(error.message, "error");
+                }
+              },
+            }),
+            iconButton("edit", { size: "sm", variant: "ghost", title: "Edit", onClick: () => openForm(row) }),
+            iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Remove", onClick: async () => {
+              const ok = await confirmDialog({
+                title: `Stop reports to ${row.name}?`,
+                message: "They will no longer receive the daily executive summary.",
+                confirmLabel: "Remove",
+                danger: true,
+              });
+              if (!ok) return;
+              try {
+                await del(`/company/report-recipients/${row.id}`);
+                toast("Recipient removed.", "success");
+                load();
+              } catch (error) {
+                toast(error.message, "error");
+              }
+            } })),
+        },
+      ],
+    }));
+  }
+
+  function openForm(row) {
+    const isEdit = Boolean(row);
+    const name = textInput({ value: row?.name || "", placeholder: "Full name" });
+    const number = textInput({
+      value: row?.whatsapp_number || "",
+      placeholder: "+263 77 123 4567",
+      attrs: { inputmode: "tel", autocomplete: "tel" },
+    });
+    const roleLabel = textInput({ value: row?.role_label || "", placeholder: "Owner, manager, accountant…" });
+    const email = textInput({ type: "email", value: row?.email || "", placeholder: "name@company.com" });
+    const status = select({
+      value: row && row.is_active === false ? "paused" : "active",
+      options: [{ value: "active", label: "Receiving reports" }, { value: "paused", label: "Paused" }],
+    });
+    const errorHost = h("div");
+    const instance = modal({
+      title: isEdit ? `Edit ${row.name}` : "Add a report recipient",
+      subtitle: "No login needed — this person only receives the WhatsApp summary.",
+      size: "sm",
+      body: h("div", { class: "col gap-3" }, errorHost,
+        field({ label: "Full name", control: name, required: true }),
+        field({
+          label: "WhatsApp number", control: number, required: true,
+          hint: "Include the country code, e.g. +263 77 123 4567.",
+        }),
+        formGrid([
+          field({ label: "Role / label", control: roleLabel }),
+          field({ label: "Status", control: status }),
+        ]),
+        field({ label: "Email (optional)", control: email, hint: "Kept for your records; delivery is by WhatsApp." })),
+      footer: [button("Cancel", { onClick: () => instance.close() }), button(isEdit ? "Save changes" : "Add recipient", {
+        variant: "primary",
+        onClick: async () => {
+          const payload = {
+            name: name.value.trim(),
+            whatsapp_number: number.value.trim(),
+            role_label: roleLabel.value.trim(),
+            email: email.value.trim(),
+            is_active: status.value === "active",
+          };
+          try {
+            if (isEdit) await patch(`/company/report-recipients/${row.id}`, payload);
+            else await post("/company/report-recipients", payload);
+            toast(isEdit ? "Recipient updated." : "Recipient added.", "success");
+            instance.close();
+            load();
+          } catch (error) {
+            clear(errorHost);
+            errorHost.appendChild(alertBox(error.message, "danger"));
+          }
+        },
+      })],
+    });
+    name.focus();
+  }
+
+  async function preview() {
+    try {
+      const data = await get("/company/report-recipients/preview");
+      const instance = modal({
+        title: "Today's executive summary",
+        subtitle: `Preview · ${data.local_date || "today"} · 6pm local time`,
+        size: "md",
+        body: h("div", { class: "col gap-3" },
+          h("pre", { class: "report-preview" }, data.text),
+          data.whatsapp && !data.whatsapp.configured
+            ? alertBox("WhatsApp is not connected yet. Add the environment variables on Render before sending.", "warning")
+            : null),
+        footer: [button("Close", { onClick: () => instance.close() })],
+      });
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  }
+
+  async function sendNow() {
+    const ok = await confirmDialog({
+      title: "Send today's report now?",
+      message: "This sends the executive summary to every active recipient immediately. Today's scheduled 6pm run will be marked as already sent.",
+      confirmLabel: "Send now",
+    });
+    if (!ok) return;
+    try {
+      const result = await post("/company/report-recipients/send-now", { force: true });
+      if (result.status === "skipped") {
+        toast(result.reason || "Add a report recipient first.", "warning");
+      } else if (result.status === "not_configured") {
+        toast("WhatsApp is not connected yet. Add the environment variables on Render.", "warning");
+      } else if (result.status === "failed" || result.status === "partial") {
+        toast(`Report finished with ${result.failed || 0} failed delivery${result.failed === 1 ? "" : "ies"}. Check the recipient number.`, "warning");
+      } else {
+        toast(`Report sent to ${result.delivered || 0} recipient${result.delivered === 1 ? "" : "s"}.`, "success");
+      }
+      load();
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  }
+
+  host.appendChild(card(
+    "Report recipients",
+    "The executive summary is delivered every day at 6pm company time — sales, profit, week and month trends, and management advice.",
+    listHost,
+  ));
   await load();
 };
 

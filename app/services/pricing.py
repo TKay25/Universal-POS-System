@@ -35,6 +35,7 @@ def price_cart(
     """
     settings = company.settings
     tax_cfg = company.module_config("tax_engine")
+    tax_enabled = company.module_enabled("tax_engine")
     prices_include_tax = bool(tax_cfg.get("prices_include_tax", False))
 
     prepared: list[dict] = []
@@ -51,7 +52,9 @@ def price_cart(
 
         rate = 0.0
         inclusive = prices_include_tax
-        if product.tax_rate is not None:
+        if not tax_enabled:
+            rate = 0.0
+        elif product.tax_rate is not None:
             rate = float(product.tax_rate.rate or 0)
             inclusive = bool(product.tax_rate.is_inclusive)
         elif settings.get("sales", {}).get("default_tax_rate_id"):
@@ -147,6 +150,9 @@ def price_cart(
     points_redeemed = 0
     if company.module_enabled("loyalty") and customer is not None and redeem_points:
         requested = min(int(redeem_points), int(customer.loyalty_points or 0))
+        minimum = int(loyalty_cfg.get("minimum_redeem", 0) or 0)
+        if requested < minimum:
+            requested = 0
         unit_value = int(loyalty_cfg.get("redeem_value", 1) or 0)
         redeem_cents = requested * unit_value
         subtotal_for_cap = net_cents + tax_total + service_charge_cents + tip_cents

@@ -40,6 +40,20 @@ def next_sale_number(company) -> str:
     return f"{prefix}{number:0{padding}d}"
 
 
+def pin_can_override(company, pin: str) -> bool:
+    """True when ``pin`` belongs to an active teammate allowed to override prices."""
+    if not pin:
+        return False
+    for colleague in company.users:
+        if colleague.status != "active" or not colleague.pin_hash:
+            continue
+        if not colleague.has_permission("pos.override"):
+            continue
+        if colleague.check_pin(pin):
+            return True
+    return False
+
+
 # --------------------------------------------------------------------------- #
 # Sales
 # --------------------------------------------------------------------------- #
@@ -62,6 +76,8 @@ def complete_sale(company, user, payload: dict) -> Sale:
         raise bad_request("Select a customer to continue.", {"customer_id": "Customer is required."})
 
     lines: list[dict] = []
+    override_cfg = company.module_config("price_overrides")
+    override_module = company.module_enabled("price_overrides")
     for index, raw in enumerate(raw_lines):
         product = Product.query.filter_by(id=raw.get("product_id"), company_id=company.id).first()
         if product is None:
@@ -80,12 +96,66 @@ def complete_sale(company, user, payload: dict) -> Sale:
                 f"Only {product.stock_qty:g} × {product.name} left in stock.",
                 {"lines": f"Insufficient stock for {product.name}."},
             )
+
+        unit_price = raw.get("unit_price_cents")
+        if unit_price not in (None, ""):
+            try:
+                unit_price = int(unit_price)
+            except (TypeError, ValueError):
+                raise bad_request("That line price is not valid.", {"lines": "Invalid price."})
+            if unit_price < 0:
+                raise bad_request("A line price cannot be negative.", {"lines": "Invalid price."})
+            list_price = int(product.price_cents or 0)
+            if unit_price < list_price:
+                if not override_module:
+                    raise bad_request(
+                        "Changing a line price needs the Price Overrides module.",
+                        {"lines": f"{product.name} price override is off."},
+                    )
+                limit = float(override_cfg.get("max_percent_below", 100) or 0)
+                floor = _round(list_price * (1 - limit / 100)) if limit < 100 else 0
+                if unit_price < floor:
+                    raise bad_request(
+                        f"{product.name} cannot go more than {limit:g}% below list price.",
+                        {"lines": f"Lowest allowed price for {product.name} is {floor / 100:,.2f}."},
+                    )
+                if override_cfg.get("require_pin", True):
+                    if not pin_can_override(company, str(raw.get("override_pin") or "")):
+                        raise bad_request(
+                            f"A manager PIN is required to change the price of {product.name}.",
+                            {"lines": f"PIN required for {product.name}."},
+                        )
+                elif not user.has_permission("pos.override"):
+                    raise bad_request(
+                        "Your role cannot change line prices.",
+                        {"lines": f"You cannot override {product.name}."},
+                    )
+
+        line_discount = int(raw.get("discount_cents", 0) or 0)
+        if line_discount < 0:
+            line_discount = 0
+        if line_discount > 0:
+            manual_cfg = company.module_config("discounts")
+            if not company.module_enabled("discounts") or not manual_cfg.get("allow_manual", True):
+                raise bad_request(
+                    "Manual discounts are turned off for this company.",
+                    {"lines": f"{product.name} cannot be discounted."},
+                )
+            effective_price = unit_price if unit_price not in (None, "") else int(product.price_cents or 0)
+            cap_percent = float(manual_cfg.get("max_manual_percent", 100) or 100)
+            cap = int(effective_price * qty * cap_percent / 100)
+            if line_discount > cap:
+                raise bad_request(
+                    f"{product.name} is discounted more than the {cap_percent:g}% manual limit.",
+                    {"lines": f"Discount cap for {product.name} is {cap / 100:,.2f}."},
+                )
+
         lines.append(
             {
                 "product": product,
                 "qty": qty,
-                "unit_price_cents": raw.get("unit_price_cents"),
-                "discount_cents": raw.get("discount_cents", 0),
+                "unit_price_cents": unit_price,
+                "discount_cents": line_discount,
                 "note": raw.get("note", ""),
             }
         )
@@ -149,6 +219,11 @@ def complete_sale(company, user, payload: dict) -> Sale:
         if method.requires_reference and not (raw.get("reference") or "").strip():
             raise bad_request(f"{method.name} needs a reference.", {"payments": f"Reference required for {method.name}."})
         if method.type == "credit":
+            if not company.module_config("customers").get("allow_credit", True):
+                raise bad_request(
+                    "Store credit is turned off for this company.",
+                    {"payments": "Store credit is disabled."},
+                )
             if customer is None:
                 raise bad_request("Store credit needs a customer.", {"payments": "Select a customer."})
             if amount > (customer.credit_balance_cents or 0) + credit_used:
@@ -484,6 +559,12 @@ def shift_cash_summary(company, shift: Shift) -> dict:
 def close_shift(company, shift: Shift, *, counted_cash_cents: int | None, notes="") -> Shift:
     if shift.status == "closed":
         raise bad_request("That shift is already closed.")
+    if company.module_enabled("shifts") and company.module_config("shifts").get("count_payments", True):
+        if counted_cash_cents is None:
+            raise bad_request(
+                "Count the cash in the drawer before closing.",
+                {"counted_cash": "Enter the counted cash."},
+            )
     summary = shift_cash_summary(company, shift)
     shift.expected_cash_cents = summary["expected_cash_cents"]
     if counted_cash_cents is not None:

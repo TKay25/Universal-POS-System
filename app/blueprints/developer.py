@@ -150,6 +150,7 @@ def create_company():
             "currency_code": {"type": "str", "default": "USD", "max_len": 6},
             "currency_symbol": {"type": "str", "default": "$", "max_len": 4},
             "contact_email": {"type": "str", "default": "", "max_len": 180},
+            "whatsapp_number": {"type": "str", "default": "", "max_len": 40},
             "owner_name": {"type": "str", "default": "", "max_len": 120},
             "owner_email": {"type": "email", "default": "", "max_len": 180},
             "owner_password": {"type": "text", "default": "", "trim": False, "max_len": 200},
@@ -162,6 +163,15 @@ def create_company():
             raise bad_request("Set a password of at least 8 characters for the owner.",
                               {"owner_password": "Too short."})
 
+    whatsapp_number = str(payload.get("whatsapp_number") or "").strip()
+    if whatsapp_number:
+        from app.services import whatsapp
+
+        try:
+            whatsapp_number = whatsapp.normalise_number(whatsapp_number)
+        except ValueError as error:
+            raise bad_request(str(error), {"whatsapp_number": str(error)}) from error
+
     company = provision_company(
         payload["name"],
         plan=payload["plan"],
@@ -169,14 +179,28 @@ def create_company():
         currency_code=payload["currency_code"],
         currency_symbol=payload["currency_symbol"],
         contact_email=payload["contact_email"],
+        settings_patch={"business": {"whatsapp_number": whatsapp_number}},
     )
+    owner = None
     if payload["owner_email"]:
-        add_user(
+        owner = add_user(
             company,
             email=payload["owner_email"],
             full_name=payload["owner_name"] or "Workspace Owner",
             password=payload["owner_password"],
             role=company.owner_role,
+        )
+    if whatsapp_number and owner is not None:
+        from app.models import ReportRecipient
+
+        db.session.add(
+            ReportRecipient(
+                company_id=company.id,
+                user_id=owner.id,
+                name=owner.full_name,
+                whatsapp_number=whatsapp_number,
+                role_label="Workspace owner",
+            )
         )
     db.session.commit()
     audit("developer.company_created", entity="company", entity_id=company.id,

@@ -4,7 +4,7 @@ import { h, clear } from "../core/dom.js";
 import { icon, productIcon } from "../core/icons.js";
 import { money, number, date, isoDay, addDays, rangeFromPreset } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
-import { settings, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
+import { settings, preferences, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
 import {
   pageHeader, statCard, sectionCard, button, table, statusBadge, badge, toast, loadingBlock,
   emptyState, alertBox, moneyText, avatar,
@@ -22,26 +22,34 @@ export default async function dashboardView(ctx) {
   let overview;
   let onboarding = null;
   let insights = null;
+  let loadedAt = 0;
 
   async function load() {
     const range = rangeFromPreset("30d", 29);
+    const canReport = hasPerm("reports.view");
     const [dashboardData, overviewData] = await Promise.all([
       get("/reports/dashboard"),
-      get("/reports/overview", range),
+      canReport ? get("/reports/overview", range).catch(() => null) : Promise.resolve(null),
     ]);
     today = dashboardData;
-    overview = overviewData;
-    if (hasPerm("reports.view")) {
-      insights = await get("/reports/insights").catch(() => null);
+    overview = overviewData || {};
+    // Paint the numbers that matter first; the secondary panels arrive after.
+    render();
+    loadedAt = Date.now();
+
+    const secondary = [];
+    if (canReport) {
+      secondary.push(get("/reports/insights").then((data) => { insights = data; }).catch(() => null));
     }
     if (hasPerm("settings.manage")) {
-      onboarding = await get("/company/onboarding").catch(() => null);
+      secondary.push(get("/company/onboarding").then((data) => { onboarding = data; }).catch(() => null));
     }
+    if (!secondary.length) return;
+    await Promise.all(secondary);
+    const scroller = el.closest(".view");
+    const scrollTop = scroller?.scrollTop || 0;
     render();
-    const loading = el.querySelector(".loading-block");
-    if (loading) loading.remove();
-    clear(el);
-    render();
+    if (scroller) scroller.scrollTop = scrollTop;
   }
 
   function greeting() {
@@ -54,10 +62,13 @@ export default async function dashboardView(ctx) {
   function render() {
     clear(el);
     const user = currentUser();
-    const widgets = new Set(settings()?.dashboard?.widgets || [
-      "sales_today", "transactions_today", "average_ticket", "low_stock",
-      "sales_chart", "payment_mix", "top_products", "recent_sales",
-    ]);
+    const personalWidgets = preferences().dashboard_widgets;
+    const widgets = new Set(
+      Array.isArray(personalWidgets) ? personalWidgets : settings()?.dashboard?.widgets || [
+        "sales_today", "transactions_today", "average_ticket", "low_stock",
+        "sales_chart", "payment_mix", "top_products", "recent_sales",
+      ],
+    );
 
     el.appendChild(pageHeader({
       title: `${greeting()}, ${user.full_name.split(" ")[0]}`,
@@ -191,7 +202,7 @@ export default async function dashboardView(ctx) {
           ? table({
             compact: true,
             rows: recent,
-            onRowClick: (row) => openSaleDetail(row.id, { onChanged: load }),
+            onRowClick: (row) => openSaleDetail(row.id, { onChanged: () => ensureLoaded({ force: true }) }),
             columns: [
               { key: "number", label: "Receipt", render: (row) => h("div", {}, h("div", { class: "strong mono" }, row.number), h("div", { class: "tiny dim" }, row.cashier)) },
               { key: "customer", label: "Customer", render: (row) => row.customer || "Walk-in" },
@@ -316,10 +327,20 @@ export default async function dashboardView(ctx) {
   }
 
   ctx.tab?.setTitle?.("Dashboard");
-  load().catch((error) => {
-    clear(el);
-    el.appendChild(alertBox(error.message, "danger"));
-  });
 
-  return { el, onActivate: () => load().catch(() => {}) };
+  let inFlight = null;
+  function ensureLoaded({ force = false } = {}) {
+    if (inFlight) return inFlight;
+    if (!force && loadedAt && Date.now() - loadedAt < 60_000) return Promise.resolve();
+    inFlight = load()
+      .catch((error) => {
+        clear(el);
+        el.appendChild(alertBox(error.message, "danger"));
+      })
+      .finally(() => { inFlight = null; });
+    return inFlight;
+  }
+
+  ensureLoaded();
+  return { el, onActivate: () => { ensureLoaded(); } };
 }

@@ -122,6 +122,10 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
     const currency = select({ value: "USD|$", options: CURRENCIES });
     const vat = textInput({ placeholder: "VAT number (optional)", attrs: { maxlength: "60" } });
     const companyReg = textInput({ placeholder: "Company registration number (optional)", attrs: { maxlength: "60" } });
+    const whatsapp = textInput({
+      placeholder: "+263 77 123 4567",
+      attrs: { inputmode: "tel", autocomplete: "tel", required: "required" },
+    });
 
     const submit = button("Create my workspace", { variant: "primary", size: "lg", block: true, type: "submit" });
 
@@ -142,6 +146,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
             currency_symbol: symbol,
             vat_number: vat.value.trim(),
             company_reg_number: companyReg.value.trim(),
+            whatsapp_number: whatsapp.value.trim(),
           });
           store.set({ session, csrf: session.csrf_token });
           applyBranding();
@@ -163,6 +168,12 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       field({ label: "VAT registration number", control: vat }),
     ]),
     field({ label: "Company registration number", control: companyReg }),
+    field({
+      label: "WhatsApp number",
+      control: whatsapp,
+      required: true,
+      hint: "We use this for your 6pm executive summary. Include the country code.",
+    }),
     submit,
     h("p", { class: "tiny dim center" },
       "You become the workspace Administrator with full access. You will start on a 14-day trial with every module available."));

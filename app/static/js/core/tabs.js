@@ -29,12 +29,34 @@ class TabManager {
       return existing;
     }
 
-    const button = h("button", { class: "tab", type: "button", title, draggable: "true" });
-    const closeBtn = h("span", { class: "tab__close", role: "button", title: "Close tab" }, icon("x"));
+    const slug = String(id).replace(/[^\w-]/g, "-");
+    const buttonId = `tab-${slug}`;
+    const panelId = `view-${slug}`;
+    const button = h("button", {
+      class: "tab",
+      type: "button",
+      title,
+      draggable: "true",
+      id: buttonId,
+      attrs: { role: "tab", "aria-selected": "false", "aria-controls": panelId, tabindex: "-1" },
+    });
+    const closeBtn = h("span", { class: "tab__close", title: "Close tab", attrs: { "aria-hidden": "true" } }, icon("x"));
     button.appendChild(iconName ? spanIcon(iconName) : null);
     const label = h("span", { class: "tab__title" }, title);
     button.appendChild(label);
     button.appendChild(closeBtn);
+    button.addEventListener("keydown", (e) => {
+      if (e.key === "Delete" || (e.key === "Backspace" && e.altKey)) {
+        e.preventDefault();
+        this.close(id);
+        return;
+      }
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        this.cycle(e.key === "ArrowRight" ? 1 : -1);
+        this.current()?.button.focus();
+      }
+    });
     button.addEventListener("mousedown", (e) => {
       if (e.button === 1) {
         e.preventDefault();
@@ -71,7 +93,11 @@ class TabManager {
       if (draggedId && draggedId !== id) this.reorder(draggedId, id);
     });
 
-    const view = h("div", { class: "view", dataset: { tab: id } }, el);
+    const view = h("div", {
+      class: "view",
+      dataset: { tab: id },
+      attrs: { role: "tabpanel", id: panelId, "aria-labelledby": buttonId },
+    }, el);
     this.host.appendChild(view);
     this.bar.appendChild(button);
 
@@ -99,6 +125,8 @@ class TabManager {
       const active = entry.id === id;
       entry.el.classList.toggle("is-active", active);
       entry.button.classList.toggle("is-active", active);
+      entry.button.setAttribute("aria-selected", active ? "true" : "false");
+      entry.button.tabIndex = active ? 0 : -1;
     }
     tab.instance?.onActivate?.();
     if (this.onChange) this.onChange(tab);
@@ -111,6 +139,7 @@ class TabManager {
     tab.title = title;
     tab.label.textContent = title;
     tab.button.title = title;
+    tab.el.setAttribute("aria-label", title);
   }
 
   close(id, { force = false } = {}) {

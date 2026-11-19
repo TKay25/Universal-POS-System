@@ -11,7 +11,7 @@ from typing import Any
 
 from sqlalchemy import UniqueConstraint
 
-from app.defaults import deep_merge, default_settings
+from app.defaults import deep_merge, default_preferences, default_settings
 from app.extensions import db
 from app.modules import MODULE_BY_KEY, module_defaults
 from app.utils import initials, iso, utcnow
@@ -205,6 +205,24 @@ class User(TimestampMixin, Base):
 
     company = db.relationship("Company", back_populates="users")
     role = db.relationship("Role", back_populates="users")
+    preference = db.relationship(
+        "UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
+
+    # ---- personal preferences -------------------------------------------- #
+    @property
+    def preferences(self) -> dict:
+        stored = (self.preference.data if self.preference else None) or {}
+        return deep_merge(default_preferences(), stored)
+
+    def update_preferences(self, patch: dict) -> dict:
+        row = self.preference
+        if row is None:
+            row = UserPreference(user=self, data={})
+            db.session.add(row)
+            self.preference = row
+        row.data = deep_merge(row.data or {}, patch)
+        return self.preferences
 
     # ---- password / pin -------------------------------------------------- #
     def set_password(self, raw: str) -> None:
@@ -274,6 +292,112 @@ class User(TimestampMixin, Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<User {self.email}>"
+
+
+class UserPreference(Base):
+    """Personal, per-user switches (theme, density, POS personal overrides).
+
+    Stored in its own table so existing databases pick it up through
+    ``db.create_all()`` without a column migration on ``users``.
+    """
+
+    __tablename__ = "user_preferences"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True
+    )
+    data = db.Column(db.JSON, default=dict, nullable=False)
+
+    user = db.relationship("User", back_populates="preference")
+
+
+class ReportRecipient(TimestampMixin, Base):
+    """Someone who receives the executive summary but does not sign in.
+
+    Deliberately separate from :class:`User`: a WhatsApp-only recipient needs no
+    password, role or seat, and can be managed by an administrator alone.
+    """
+
+    __tablename__ = "report_recipients"
+    __table_args__ = (
+        UniqueConstraint("company_id", "whatsapp_number", name="uq_report_recipient_number"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(
+        db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    name = db.Column(db.String(120), nullable=False)
+    whatsapp_number = db.Column(db.String(40), nullable=False)
+    email = db.Column(db.String(180), default="")
+    role_label = db.Column(db.String(80), default="")
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    last_sent_at = db.Column(db.DateTime)
+    last_status = db.Column(db.String(20), default="")
+    last_error = db.Column(db.String(240), default="")
+
+    company = db.relationship("Company")
+    user = db.relationship("User")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "name": self.name,
+            "whatsapp_number": self.whatsapp_number,
+            "email": self.email or "",
+            "role_label": self.role_label or "",
+            "is_active": bool(self.is_active),
+            "last_sent_at": iso(self.last_sent_at),
+            "last_status": self.last_status or "",
+            "last_error": self.last_error or "",
+            "created_at": iso(self.created_at),
+        }
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ReportRecipient {self.name} {self.whatsapp_number}>"
+
+
+class ReportDispatch(TimestampMixin, Base):
+    """One company/day delivery attempt, kept idempotent across retries."""
+
+    __tablename__ = "report_dispatches"
+    __table_args__ = (
+        UniqueConstraint("company_id", "report_date", "channel", name="uq_report_dispatch_day"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(
+        db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    report_date = db.Column(db.Date, nullable=False)
+    channel = db.Column(db.String(20), default="whatsapp", nullable=False)
+    status = db.Column(db.String(20), default="sending", nullable=False)
+    recipient_count = db.Column(db.Integer, default=0, nullable=False)
+    delivered_count = db.Column(db.Integer, default=0, nullable=False)
+    failed_count = db.Column(db.Integer, default=0, nullable=False)
+    summary = db.Column(db.Text, default="")
+    details = db.Column(db.JSON, default=list, nullable=False)
+    sent_at = db.Column(db.DateTime)
+
+    company = db.relationship("Company")
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "report_date": self.report_date.isoformat() if self.report_date else "",
+            "channel": self.channel,
+            "status": self.status,
+            "recipient_count": self.recipient_count,
+            "delivered_count": self.delivered_count,
+            "failed_count": self.failed_count,
+            "summary": self.summary or "",
+            "details": self.details or [],
+            "sent_at": iso(self.sent_at),
+            "updated_at": iso(self.updated_at),
+        }
 
 
 # --------------------------------------------------------------------------- #
@@ -904,6 +1028,7 @@ class SalePayment(Base):
             "tendered_cents": self.tendered_cents,
             "change_cents": self.change_cents,
             "reference": self.reference,
+            "opens_drawer": bool(self.method.opens_drawer) if self.method else False,
         }
 
 

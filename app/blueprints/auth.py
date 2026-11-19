@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from flask import Blueprint, jsonify, request, session
 
-from app.defaults import DASHBOARD_WIDGETS, PERMISSIONS
+from app.defaults import (
+    DASHBOARD_WIDGETS,
+    PERMISSIONS,
+    PREFERENCE_DENSITIES,
+    PREFERENCE_SIDEBARS,
+    PREFERENCE_THEMES,
+)
 from app.extensions import db
 from app.models import Announcement, Company, User
 from app.modules import public_catalog
@@ -56,6 +62,7 @@ def build_session_payload(user: User) -> dict:
         "module_catalog": public_catalog(),
         "permissions_catalog": PERMISSIONS,
         "dashboard_widgets": DASHBOARD_WIDGETS,
+        "preferences": user.preferences,
         "announcements": active_announcements(company),
         "shift": None,
         "impersonating": bool(user.is_developer and session.get("impersonate_company_id")),
@@ -133,13 +140,22 @@ def register():
             "currency_symbol": {"type": "str", "default": "$", "max_len": 4},
             "vat_number": {"type": "str", "default": "", "max_len": 60},
             "company_reg_number": {"type": "str", "default": "", "max_len": 60},
+            "whatsapp_number": {"type": "str", "default": "", "max_len": 40},
         },
     )
     email = payload["email"].lower()
     if User.query.filter(db.func.lower(User.email) == email).first() is not None:
         raise bad_request("That email is already registered.", {"email": "Email already in use."})
 
+    from app.services import whatsapp
     from app.services.provisioning import add_user, provision_company
+
+    whatsapp_number = ""
+    if str(payload.get("whatsapp_number") or "").strip():
+        try:
+            whatsapp_number = whatsapp.normalise_number(payload["whatsapp_number"])
+        except ValueError as error:
+            raise bad_request(str(error), {"whatsapp_number": str(error)}) from error
 
     company = provision_company(
         payload["company_name"],
@@ -156,6 +172,7 @@ def register():
                 "country": "Zimbabwe",
                 "tax_number": payload["vat_number"],
                 "company_reg_number": payload["company_reg_number"],
+                "whatsapp_number": whatsapp_number,
             },
         },
     )
@@ -166,6 +183,18 @@ def register():
         password=payload["password"],
         role=company.owner_role,
     )
+    if whatsapp_number:
+        from app.models import ReportRecipient
+
+        db.session.add(
+            ReportRecipient(
+                company_id=company.id,
+                user_id=owner.id,
+                name=owner.full_name,
+                whatsapp_number=whatsapp_number,
+                role_label="Workspace owner",
+            )
+        )
     db.session.commit()
 
     start_session(owner)
@@ -229,6 +258,74 @@ def switch_user():
     audit("auth.switch_user", entity="user", entity_id=target.id,
           summary=f"Terminal handed to {target.full_name}", commit=True)
     return jsonify(build_session_payload(target))
+
+
+# --------------------------------------------------------------------------- #
+# Personal preferences
+# --------------------------------------------------------------------------- #
+def sanitize_preferences(patch: dict) -> dict:
+    if not isinstance(patch, dict):
+        raise bad_request("Preferences must be an object.")
+    clean: dict = {}
+    choices = {
+        "theme": (PREFERENCE_THEMES, "Light, dark or blank to follow the workspace."),
+        "density": (PREFERENCE_DENSITIES, "Comfortable, compact or blank to follow the workspace."),
+        "sidebar": (PREFERENCE_SIDEBARS, "Expanded, collapsed or blank to follow the workspace."),
+    }
+    for key, (allowed, hint) in choices.items():
+        if key not in patch:
+            continue
+        value = str(patch.get(key) or "")
+        if value not in allowed:
+            raise bad_request(hint, {key: "Invalid option."})
+        clean[key] = value
+
+    if "dashboard_widgets" in patch:
+        raw = patch.get("dashboard_widgets")
+        if raw is None:
+            clean["dashboard_widgets"] = None
+        elif isinstance(raw, list):
+            valid = {widget["key"] for widget in DASHBOARD_WIDGETS}
+            clean["dashboard_widgets"] = [key for key in raw if key in valid][:12]
+        else:
+            raise bad_request("Dashboard widgets must be a list.", {"dashboard_widgets": "Invalid list."})
+
+    if "pos" in patch:
+        raw = patch.get("pos")
+        if not isinstance(raw, dict):
+            raise bad_request("POS preferences must be an object.", {"pos": "Invalid object."})
+        pos: dict = {}
+        for key in ("sound_enabled", "auto_print"):
+            if key not in raw:
+                continue
+            value = raw[key]
+            if value is None:
+                pos[key] = None
+            elif isinstance(value, bool):
+                pos[key] = value
+            else:
+                raise bad_request("POS preferences must be on, off or unset.", {"pos": "Invalid value."})
+        if pos:
+            clean["pos"] = pos
+    return clean
+
+
+@bp.get("/preferences")
+@login_required
+def read_preferences():
+    return jsonify({"preferences": current_user().preferences, "dashboard_widgets": DASHBOARD_WIDGETS})
+
+
+@bp.patch("/preferences")
+@login_required
+def update_preferences():
+    user = current_user()
+    clean = sanitize_preferences(request.get_json(silent=True) or {})
+    if not clean:
+        raise bad_request("Nothing to update.")
+    preferences = user.update_preferences(clean)
+    db.session.commit()
+    return jsonify({"preferences": preferences})
 
 
 # --------------------------------------------------------------------------- #

@@ -178,7 +178,6 @@ MODULE_CATALOG: list[dict] = [
         "permissions": ["pos.sell"],
         "schema": [
             {"key": "percent", "label": "Service charge (%)", "type": "number", "default": 10, "min": 0, "max": 100},
-            {"key": "applies_to", "label": "Applies to", "type": "select", "default": "all", "options": ["all", "dine_in"]},
         ],
     },
     {
@@ -257,7 +256,6 @@ MODULE_CATALOG: list[dict] = [
         "permissions": ["reports.view"],
         "schema": [
             {"key": "default_range_days", "label": "Default report range (days)", "type": "number", "default": 30, "min": 1, "max": 365},
-            {"key": "week_starts_on", "label": "Week starts on", "type": "select", "default": "monday", "options": ["monday", "sunday"]},
         ],
     },
     {
@@ -338,27 +336,13 @@ MODULE_CATALOG: list[dict] = [
     },
     {
         "key": "suppliers",
-        "name": "Suppliers & Purchasing",
+        "name": "Suppliers",
         "category": "Operations",
         "icon": "truck",
-        "description": "Supplier records, purchase orders and receiving.",
+        "description": "Supplier records you can attach to stock received into the shop.",
         "default": False,
         "permissions": ["inventory.manage"],
-        "schema": [
-            {"key": "auto_receive", "label": "Auto-receive confirmed orders", "type": "bool", "default": True},
-        ],
-    },
-    {
-        "key": "credit_notes",
-        "name": "Store Credit Notes",
-        "category": "Finance",
-        "icon": "wallet",
-        "description": "Issue credit notes that customers can spend later.",
-        "default": False,
-        "permissions": ["sales.refund"],
-        "schema": [
-            {"key": "expiry_days", "label": "Credit note expiry (days)", "type": "number", "default": 365, "min": 1},
-        ],
+        "schema": [],
     },
 ]
 

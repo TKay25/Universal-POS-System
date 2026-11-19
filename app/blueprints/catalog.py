@@ -971,6 +971,11 @@ def inventory_count():
     apply_changes = str(request.args.get("apply", "1")).lower() not in {"0", "false", "no"}
     note = (request.get_json(silent=True) or {}).get("note", "") if request.is_json else ""
     user = current_user()
+    if apply_changes and company.module_config("bulk_stock").get("count_requires_reason") and not note.strip():
+        raise bad_request(
+            "Add a short note explaining this stock count.",
+            {"note": "A note is required for stock counts."},
+        )
 
     variances = []
     errors = []
@@ -1218,6 +1223,11 @@ def adjust_customer_balance(customer_id: int):
         },
     )
     if payload["kind"] == "credit":
+        if not company.module_config("customers").get("allow_credit", True):
+            raise bad_request(
+                "Store credit accounts are turned off for this company.",
+                {"kind": "Store credit is disabled in the Customers module."},
+            )
         delta = int(round(payload["amount"] * 100))
         if (customer.credit_balance_cents or 0) + delta < 0:
             raise bad_request("That would take the store credit below zero.", {"amount": "Too much."})

@@ -20,3 +20,21 @@ services:
         value: "true"
       - key: POS_SEED_DEMO
         value: "true"
+      - key: POS_DAILY_REPORT_SCHEDULER
+        value: "true"
+      - key: POS_DAILY_REPORT_HOUR
+        value: "18"
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_BUSINESS_NUMBER
+        sync: false
+      - key: WHATSAPP_API_VERSION
+        value: "v23.0"
+      - key: WHATSAPP_TEMPLATE_NAME
+        sync: false
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: "en"
+      - key: POS_WHATSAPP_DRY_RUN
+        value: "false"

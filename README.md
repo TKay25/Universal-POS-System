@@ -56,6 +56,47 @@ Pool knobs (all optional): `POS_DB_POOL_SIZE` (5), `POS_DB_MAX_OVERFLOW` (10),
 (`true` — reuses the busiest connection first), `POS_DB_APP_NAME` (`universal-pos`, shows
 in `pg_stat_activity`).
 
+## Daily executive summary (WhatsApp)
+
+Every company can have any number of **report recipients** — people who do not sign in
+but receive a WhatsApp executive summary at **18:00 company time**. It covers today vs
+yesterday and the same weekday last week, week-to-date vs last week and the best week
+this year, month-to-date vs last month and the best month, year-to-date vs last year,
+top products, payment mix and management advice. Recipients are managed in
+**Settings → Report recipients**.
+
+WhatsApp Cloud API credentials live only in the server environment:
+
+| Variable | Purpose |
+| --- | --- |
+| `WHATSAPP_PHONE_NUMBER_ID` | The WhatsApp **phone number ID** from Meta (not the display number) |
+| `WHATSAPP_ACCESS_TOKEN` | Permanent Cloud API access token |
+| `WHATSAPP_BUSINESS_NUMBER` | Display number, e.g. `+263 77 123 4567` (optional) |
+| `WHATSAPP_API_VERSION` | Graph API version, default `v23.0` |
+| `WHATSAPP_TEMPLATE_NAME` | Optional approved template whose body is a single `{{1}}` variable; used when the 24h customer window is closed |
+| `WHATSAPP_TEMPLATE_LANGUAGE` | Template language code, default `en` |
+| `POS_DAILY_REPORT_SCHEDULER` | `true` to run the in-process 6pm dispatcher (set in `render.yaml`) |
+| `POS_DAILY_REPORT_HOUR` | Local send hour, default `18` |
+| `POS_WHATSAPP_DRY_RUN` | `true` logs instead of sending — useful locally |
+
+The shorter aliases `WA_ID`, `WA_NUMBER` and `WA_TOKEN` are also accepted. Meta requires
+an approved message template for business-initiated messages sent outside a 24-hour
+customer-service window; if your account is in that situation, add the approved template
+in Meta Business Manager before the first 6pm run.
+
+The dispatcher is idempotent: `report_dispatches` is unique per company/day, so multiple
+gunicorn workers cannot send twice. Failed recipients are retried on the next check
+without resending to people who already received the report. You can also trigger it
+manually:
+
+```powershell
+flask --app "app:create_app()" send-executive-reports --dry-run --force
+flask --app "app:create_app()" send-executive-reports --force
+```
+
+On Render, set the three WhatsApp values on the web service. If the scheduler is disabled,
+run the `--force` command from a Render cron job instead.
+
 ## Deploying to Render
 
 1. Push this repository to GitHub and create a **Web Service** on Render (or point Render at

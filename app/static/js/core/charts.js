@@ -60,7 +60,7 @@ function responsiveChart(height, draw) {
     if (width < 120 || Math.abs(width - lastWidth) < 2) return;
     lastWidth = width;
     clear(host);
-    host.appendChild(draw(width));
+    host.appendChild(draw(width, host));
   };
 
   liveCharts.add(entry);
@@ -80,11 +80,45 @@ function responsiveChart(height, draw) {
   return host;
 }
 
+/* Monotone cubic interpolation: smooth without overshooting the data. */
+function smoothPath(points) {
+  const n = points.length;
+  if (!n) return "";
+  if (n < 3) return points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const dx = [];
+  const slope = [];
+  for (let i = 0; i < n - 1; i += 1) {
+    dx[i] = points[i + 1].x - points[i].x || 0.0001;
+    slope[i] = (points[i + 1].y - points[i].y) / dx[i];
+  }
+  const tangent = new Array(n);
+  tangent[0] = slope[0];
+  tangent[n - 1] = slope[n - 2];
+  for (let i = 1; i < n - 1; i += 1) {
+    if (slope[i - 1] * slope[i] <= 0) {
+      tangent[i] = 0;
+    } else {
+      const w1 = 2 * dx[i] + dx[i - 1];
+      const w2 = dx[i] + 2 * dx[i - 1];
+      tangent[i] = (w1 + w2) / (w1 / slope[i - 1] + w2 / slope[i]);
+    }
+  }
+  let d = `M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < n - 1; i += 1) {
+    const x1 = points[i].x + dx[i] / 3;
+    const y1 = points[i].y + (tangent[i] * dx[i]) / 3;
+    const x2 = points[i + 1].x - dx[i] / 3;
+    const y2 = points[i + 1].y - (tangent[i + 1] * dx[i]) / 3;
+    d += ` C${x1.toFixed(1)},${y1.toFixed(1)} ${x2.toFixed(1)},${y2.toFixed(1)} ${points[i + 1].x.toFixed(1)},${points[i + 1].y.toFixed(1)}`;
+  }
+  return d;
+}
+
 export function areaChart({ points = [], labels = [], height = 240, color = "var(--primary)", formatValue = money,
-  series = null } = {}) {
+  series = null, title = "" } = {}) {
   const dataSeries = series && series.length ? series : [{ name: "Sales", color, values: points }];
 
-  return responsiveChart(height, (width) => {
+  return responsiveChart(height, (width, host) => {
     const padLeft = width < 420 ? 36 : 48;
     const padRight = 12;
     const padTop = 16;
@@ -104,7 +138,9 @@ export function areaChart({ points = [], labels = [], height = 240, color = "var
       viewBox: `0 0 ${width} ${height}`,
       style: `height:${height}px;width:100%`,
       role: "img",
+      "aria-label": title || `Chart with ${count} data points`,
     });
+    if (title) svg.appendChild(s("title", {}, title));
 
     const defs = s("defs");
     for (const line of dataSeries) {
@@ -146,10 +182,10 @@ export function areaChart({ points = [], labels = [], height = 240, color = "var
       const values = line.values || [];
       if (!values.length) continue;
       const stroke = line.color || color;
-      const path = values
-        .map((value, index) => `${index === 0 ? "M" : "L"}${xFor(index).toFixed(1)},${yFor(value).toFixed(1)}`)
-        .join(" ");
-      const areaPath = `${path} L${xFor(values.length - 1).toFixed(1)},${padTop + plotH} L${xFor(0).toFixed(1)},${padTop + plotH} Z`;
+      const coords = values.map((value, index) => ({ x: xFor(index), y: yFor(value) }));
+      const path = smoothPath(coords);
+      const baseY = padTop + plotH;
+      const areaPath = `${path} L${xFor(values.length - 1).toFixed(1)},${baseY} L${xFor(0).toFixed(1)},${baseY} Z`;
       svg.appendChild(s("path", {
         d: areaPath,
         fill: `url(#${id}-${line.name.replace(/\W/g, "")})`,
@@ -166,6 +202,74 @@ export function areaChart({ points = [], labels = [], height = 240, color = "var
         svg.appendChild(dot);
       });
     }
+
+    /* Hover: a crosshair, a focus dot per series and one shared tooltip. */
+    const guide = s("line", {
+      class: "chart__crosshair", x1: 0, x2: 0, y1: padTop, y2: padTop + plotH, opacity: "0",
+    });
+    svg.appendChild(guide);
+    const focusDots = dataSeries.map((line) => {
+      const dot = s("circle", {
+        r: 4.5, fill: line.color || color, class: "chart__focus-dot", opacity: "0",
+      });
+      svg.appendChild(dot);
+      return dot;
+    });
+    const overlay = s("rect", {
+      x: padLeft, y: padTop, width: plotW, height: plotH, fill: "transparent",
+      "pointer-events": "all", style: "cursor:crosshair",
+    });
+    svg.appendChild(overlay);
+
+    const tooltip = h("div", { class: "chart-tooltip", style: { display: "none" } });
+    host.appendChild(tooltip);
+
+    const showAt = (clientX) => {
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width || count < 1) return;
+      const scale = width / rect.width;
+      const local = (clientX - rect.left) * scale;
+      const ratio = count === 1 ? 0 : (local - padLeft) / plotW;
+      const index = Math.max(0, Math.min(count - 1, Math.round(ratio * (count - 1))));
+      const x = xFor(index);
+      guide.setAttribute("x1", x);
+      guide.setAttribute("x2", x);
+      guide.setAttribute("opacity", "1");
+      let topY = padTop + plotH;
+      dataSeries.forEach((line, i) => {
+        const value = line.values?.[index];
+        if (value == null) {
+          focusDots[i].setAttribute("opacity", "0");
+          return;
+        }
+        const y = yFor(value);
+        focusDots[i].setAttribute("cx", x);
+        focusDots[i].setAttribute("cy", y);
+        focusDots[i].setAttribute("opacity", "1");
+        topY = Math.min(topY, y);
+      });
+      const rows = [h("div", { class: "chart-tooltip__label" }, labels[index] || "")];
+      dataSeries.forEach((line) => {
+        const value = line.values?.[index];
+        if (value == null) return;
+        rows.push(h("div", { class: "chart-tooltip__row" },
+          h("span", { class: "chart-tooltip__dot", style: { background: line.color || color } }),
+          dataSeries.length > 1 ? h("span", { class: "chart-tooltip__name" }, line.name) : null,
+          h("strong", {}, formatValue(value))));
+      });
+      tooltip.replaceChildren(...rows);
+      tooltip.style.display = "block";
+      tooltip.style.left = `${(x / width) * rect.width}px`;
+      tooltip.style.top = `${(topY / height) * rect.height}px`;
+    };
+    const hide = () => {
+      tooltip.style.display = "none";
+      guide.setAttribute("opacity", "0");
+      focusDots.forEach((dot) => dot.setAttribute("opacity", "0"));
+    };
+    overlay.addEventListener("pointermove", (event) => showAt(event.clientX));
+    overlay.addEventListener("pointerleave", hide);
+    overlay.addEventListener("pointerdown", (event) => showAt(event.clientX));
 
     return svg;
   });

@@ -3,17 +3,22 @@
 import { h } from "./dom.js";
 import { button, modal } from "./ui.js";
 
-let deferredPrompt = null;
+let deferredPrompt = window.__posInstallPrompt || null;
 
 window.addEventListener("beforeinstallprompt", (event) => {
   // Keep the browser's mini-infobar out of the till and drive the install from
   // the app's own "Install app" entries instead.
   event.preventDefault();
   deferredPrompt = event;
+  if (window.__posInstallPrompt !== event) {
+    window.__posInstallPrompt = event;
+    window.dispatchEvent(new Event("pos:install-available"));
+  }
 });
 
 window.addEventListener("appinstalled", () => {
   deferredPrompt = null;
+  window.__posInstallPrompt = null;
 });
 
 export function isStandalone() {
@@ -48,19 +53,32 @@ function installSteps() {
   ];
 }
 
+/** True when the browser has offered its native one-click install flow. */
+export function canInstall() {
+  return !isStandalone() && Boolean(deferredPrompt || window.__posInstallPrompt);
+}
+
 function showInstallHelp() {
   const installed = isStandalone();
   let instance = null;
+  const steps = installed ? [] : installSteps();
+  const copy = installed
+    ? "This window is already the installed app — launch it from your home screen, app list or desktop."
+    : "Installing adds Universal POS to your device with its own icon, a full-screen window and a home for the offline shell.";
   instance = modal({
     title: "Install Universal POS",
-    subtitle: installed ? "Already installed" : "Runs full screen, straight from your home screen or desktop",
+    subtitle: installed ? "Already installed" : "Full screen, offline-ready, one click away",
     icon: "download",
     size: "sm",
     body: h("div", { class: "col gap-3" },
-      h("p", { class: "muted small" }, installed
-        ? "This window is already the installed app — launch it from your home screen, app list or desktop."
-        : "Installing adds Universal POS to your device with its own icon, a full-screen window and a home for the offline shell."),
-      installed ? null : h("ol", { class: "install-steps" }, installSteps().map((step) => h("li", {}, step)))),
+      h("p", { class: "muted small" }, copy),
+      installed ? null : h("div", { class: "install-note" },
+        isIos()
+          ? "Safari controls app installation on iPhone and iPad."
+          : "Your browser controls the install prompt — it appears here as soon as the app is ready."),
+      installed ? null : h("ol", { class: "install-steps" }, steps.map((step) => h("li", {}, step))),
+      installed ? null : h("p", { class: "tiny dim" },
+        "Reload this page once if the install button has not appeared yet.")),
     footer: [button("Got it", { variant: "primary", onClick: () => instance.close() })],
   });
 }
@@ -71,12 +89,13 @@ export async function installApp() {
     showInstallHelp();
     return { outcome: "installed" };
   }
-  if (!deferredPrompt) {
+  const prompt = deferredPrompt || window.__posInstallPrompt;
+  if (!prompt) {
     showInstallHelp();
     return { outcome: "help" };
   }
-  const prompt = deferredPrompt;
   deferredPrompt = null;
+  window.__posInstallPrompt = null;
   try {
     prompt.prompt();
     const choice = await prompt.userChoice;

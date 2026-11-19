@@ -327,6 +327,10 @@ SECTIONS_MAP.companies = async (host) => {
     const ownerName = textInput({ placeholder: "Owner full name" });
     const ownerEmail = textInput({ type: "email", placeholder: "owner@company.com" });
     const ownerPassword = textInput({ type: "password", placeholder: "At least 8 characters" });
+    const whatsapp = textInput({
+      placeholder: "+263 77 123 4567",
+      attrs: { inputmode: "tel", autocomplete: "tel" },
+    });
     const errorHost = h("div");
     const instance = modal({
       title: "Create a company",
@@ -345,7 +349,12 @@ SECTIONS_MAP.companies = async (host) => {
           field({ label: "Owner name", control: ownerName }),
           field({ label: "Owner email", control: ownerEmail }),
         ]),
-        field({ label: "Owner password", control: ownerPassword, hint: "Required when an owner email is set." })),
+        field({ label: "Owner password", control: ownerPassword, hint: "Required when an owner email is set." }),
+        field({
+          label: "Owner WhatsApp",
+          control: whatsapp,
+          hint: "Used for the daily executive summary. Include the country code.",
+        })),
       footer: [button("Cancel", { onClick: () => instance.close() }), button("Create company", { variant: "primary", onClick: async () => {
         try {
           await post("/developer/companies", {
@@ -357,6 +366,7 @@ SECTIONS_MAP.companies = async (host) => {
             owner_name: ownerName.value.trim(),
             owner_email: ownerEmail.value.trim(),
             owner_password: ownerPassword.value,
+            whatsapp_number: whatsapp.value.trim(),
           });
           toast("Company created.", "success");
           instance.close();

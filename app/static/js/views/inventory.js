@@ -698,6 +698,19 @@ export default async function inventoryView(ctx) {
       bodyHost.appendChild(h("div", { class: "alert alert--info" },
         icon("info"), h("span", {}, h("span", { class: "strong" }, copy.title), h("span", { class: "small" }, ` — ${copy.blurb}`))));
 
+      const countNote = mode === "count" && moduleConfig("bulk_stock").count_requires_reason
+        ? textInput({ placeholder: "Why is this count being applied?" })
+        : null;
+      if (countNote) {
+        bodyHost.appendChild(field({
+          label: "Count note",
+          control: countNote,
+          required: true,
+          hint: "Saved on every stock movement created by this count.",
+        }));
+      }
+      const currentNote = () => (countNote ? countNote.value.trim() : "");
+
       bodyHost.appendChild(h("div", { class: "flex gap-2 wrap" },
         button(mode === "import" ? "Download template" : "Download count sheet", {
           size: "sm", icon: "download",
@@ -752,7 +765,7 @@ export default async function inventoryView(ctx) {
         return;
       }
       const csv = await readFile(file);
-      const result = await post(`/inventory/count?apply=${apply ? 1 : 0}`, { csv });
+      const result = await post(`/inventory/count?apply=${apply ? 1 : 0}`, { csv, note: currentNote() });
       clear(resultHost);
       const host = h("div", { class: "card card--pad" },
         h("div", { class: "flex items-center gap-2 mb-2" },
@@ -780,7 +793,7 @@ export default async function inventoryView(ctx) {
         host.appendChild(h("div", { class: "flex gap-2 mt-3" },
           button("Apply these adjustments", {
             variant: "primary", icon: "check",
-            onClick: async () => { await post("/inventory/count?apply=1", { csv }); toast("Stock count applied.", "success"); instance.close(); await loadProducts(); },
+            onClick: async () => { await post(`/inventory/count?apply=1`, { csv, note: currentNote() }); toast("Stock count applied.", "success"); instance.close(); await loadProducts(); },
           })));
       }
       resultHost.appendChild(host);

@@ -23,6 +23,7 @@ from app.models import (
     Supplier,
     TaxRate,
     User,
+    retention_cutoff,
 )
 from app.modules import MODULE_BY_KEY, public_catalog
 from app.security import (
@@ -32,6 +33,7 @@ from app.security import (
     current_company,
     current_user,
     login_required,
+    module_required,
     not_found,
     permission_required,
 )
@@ -45,7 +47,7 @@ SETTINGS_SPEC: dict[str, dict[str, str]] = {
     "currency": {"code": "str", "symbol": "str", "position": "enum:before,after", "decimals": "int:0,3"},
     "business": {
         "legal_name": "str", "tax_number": "str", "company_reg_number": "str", "email": "str", "phone": "str",
-        "website": "str", "address": "str", "city": "str", "country": "str",
+        "whatsapp_number": "str", "website": "str", "address": "str", "city": "str", "country": "str",
     },
     "branding": {
         "logo_text": "str", "logo_data_url": "long", "primary": "color", "accent": "color",
@@ -151,6 +153,14 @@ def update_settings():
     clean = sanitize_settings(request.get_json(silent=True) or {})
     if not clean:
         raise bad_request("Nothing to update.")
+    number = (clean.get("business") or {}).get("whatsapp_number")
+    if number:
+        from app.services import whatsapp
+
+        try:
+            clean["business"]["whatsapp_number"] = whatsapp.normalise_number(number)
+        except ValueError as error:
+            raise bad_request(str(error), {"business.whatsapp_number": str(error)}) from error
     company.update_settings(clean)
     db.session.commit()
     audit("settings.updated", entity="company", entity_id=company.id,
@@ -1042,10 +1052,13 @@ def delete_supplier(supplier_id: int):
 @bp.get("/audit")
 @login_required
 @company_required
+@module_required("audit_log")
 @permission_required("audit.view")
 def audit_log():
     company = current_company()
     query = AuditLog.query.filter_by(company_id=company.id)
+    retention_days = int(company.module_config("audit_log").get("retention_days", 365) or 365)
+    query = query.filter(AuditLog.created_at >= retention_cutoff(retention_days))
     term = search_arg()
     if term:
         like = f"%{term}%"

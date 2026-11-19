@@ -5,8 +5,9 @@ import { icon } from "../core/icons.js";
 import { money, number, qty, isoDay, addDays, time, date, dateTime, initials } from "../core/fmt.js";
 import { get, downloadFile } from "../core/http.js";
 import {
-  currentCompany, currentUser, hasPerm, moduleOn, isDeveloper, impersonating, setTheme,
+  currentCompany, currentUser, hasPerm, moduleOn, isDeveloper, impersonating,
 } from "../core/store.js";
+import { toggleThemePreference } from "../core/prefs.js";
 import {
   button, iconButton, menu, toast, alertBox, loadingBlock, statusBadge, emptyState,
 } from "../core/ui.js";
@@ -104,10 +105,9 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
   }
 
   function openAccountMenu(anchor) {
-    const dark = document.documentElement.dataset.theme === "dark";
     const items = [
       { label: currentUser()?.full_name || "Account", header: true },
-      { label: "Switch theme", icon: "palette", onClick: () => setTheme(dark ? "light" : "dark") },
+      { label: "Switch theme", icon: "palette", onClick: () => toggleThemePreference().catch((error) => toast(error.message, "error")) },
       { label: "Open the till", icon: "cart", onClick: () => onOpenTill?.() },
       { label: "Full app on this device", icon: "grid", onClick: () => onOpenFullApp?.() },
     ];
@@ -208,7 +208,7 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     const token = state.token;
     if (!silent) {
       clear(body);
-      body.appendChild(h("div", { class: "mapp__loading" }, loadingBlock()));
+      body.appendChild(h("div", { class: "mapp__loading" }, loadingBlock("Loading", { compact: true })));
     }
     try {
       const value = await fetcher();

@@ -7,17 +7,34 @@ import { get, post, del } from "../core/http.js";
 import {
   store, hasPerm, moduleOn, moduleConfig, settings, currentUser, currency, currentCompany,
 } from "../core/store.js";
+import { posPreference } from "../core/prefs.js";
 import {
   button, iconButton, modal, drawer, field, textInput, textarea, select, switchControl,
-  toast, badge, statusBadge, emptyState, loadingBlock, alertBox, confirmDialog, tagInput, menu, moneyInput,
+  toast, badge, statusBadge, emptyState, alertBox, confirmDialog, tagInput, menu, moneyInput,
 } from "../core/ui.js";
 import { printReceipt } from "./saleDetail.js";
 
-const SOUND_ON = () => moduleConfig("pos").sound_enabled !== false;
+const SOUND_ON = () => posPreference("sound_enabled", moduleConfig("pos").sound_enabled !== false);
+const AUTO_PRINT = () => posPreference("auto_print", Boolean(moduleConfig("pos").auto_print));
 
 export default async function posView(ctx) {
-  const el = h("div", { class: "pos" });
-  el.appendChild(loadingBlock("Opening the till"));
+  const el = h("div", { class: "pos is-loading" });
+  const skeletonTile = () => h("div", { class: "pos-skeleton__tile" },
+    h("div", { class: "skeleton", style: { width: "38px", height: "38px", "border-radius": "10px" } }),
+    h("div", { class: "skeleton", style: { width: "72%", height: "10px", "margin-top": "auto" } }),
+    h("div", { class: "skeleton", style: { width: "46%", height: "14px" } }));
+  const loadingSkeleton = h("div", { class: "pos-skeleton", attrs: { role: "status", "aria-live": "polite" } },
+    h("span", { class: "sr-only" }, "Opening the till"),
+    h("div", { class: "pos-skeleton__toolbar", attrs: { "aria-hidden": "true" } },
+      h("div", { class: "skeleton", style: { flex: "1", height: "42px", "border-radius": "10px" } }),
+      h("div", { class: "skeleton", style: { width: "112px", height: "34px", "border-radius": "9px" } }),
+      h("div", { class: "skeleton", style: { width: "34px", height: "34px", "border-radius": "9px" } })),
+    h("div", { class: "pos-skeleton__filters", attrs: { "aria-hidden": "true" } },
+      h("div", { class: "skeleton", style: { width: "210px", height: "33px", "border-radius": "8px" } }),
+      h("div", { class: "skeleton", style: { width: "180px", height: "33px", "border-radius": "8px" } })),
+    h("div", { class: "pos-skeleton__grid", attrs: { "aria-hidden": "true" } },
+      Array.from({ length: 16 }, skeletonTile)));
+  el.appendChild(loadingSkeleton);
 
   const state = {
     products: [],
@@ -56,11 +73,12 @@ export default async function posView(ctx) {
   /* --------------------------------------------------------------------- */
   async function load() {
     const data = await get("/pos/bootstrap");
+    const allowCredit = (data.config.customers || {}).allow_credit !== false;
     Object.assign(state, {
       products: data.products,
       categories: data.categories,
       departments: data.departments || [],
-      methods: data.payment_methods,
+      methods: (data.payment_methods || []).filter((method) => allowCredit || method.type !== "credit"),
       staff: data.staff,
       config: data.config,
       modules: data.modules,
@@ -75,8 +93,8 @@ export default async function posView(ctx) {
     state.locationId = state.locations.some((row) => row.id === savedBranch)
       ? savedBranch
       : (state.locations.find((row) => row.is_default)?.id || state.locations[0]?.id || null);
-    const loadingBlock = el.querySelector(".loading-block");
-    if (loadingBlock) loadingBlock.remove();
+    loadingSkeleton.remove();
+    el.classList.remove("is-loading");
     renderAll();
     const search = el.querySelector("[data-pos-search]");
     if (search) search.focus();
@@ -87,12 +105,13 @@ export default async function posView(ctx) {
   /* --------------------------------------------------------------------- */
   function computeTotals() {
     const taxCfg = state.config.tax_engine || {};
+    const taxEnabled = Boolean(state.modules.tax_engine);
     const includeTax = Boolean(taxCfg.prices_include_tax);
     const lines = state.cart.map((line) => {
       const product = line.product;
       const gross = Math.round(line.unitPrice * line.qty);
       const lineDiscount = Math.min(gross, Math.max(0, Math.round(line.discount || 0)));
-      const rate = product.tax_rate ? Number(product.tax_rate.rate) || 0 : 0;
+      const rate = taxEnabled && product.tax_rate ? Number(product.tax_rate.rate) || 0 : 0;
       const inclusive = product.tax_rate ? Boolean(product.tax_rate.is_inclusive) : includeTax;
       return { line, product, gross, lineDiscount, base: gross - lineDiscount, rate, inclusive, allocated: 0, tax: 0 };
     });
@@ -148,9 +167,10 @@ export default async function posView(ctx) {
     const loyaltyCfg = state.config.loyalty || {};
     if (state.modules.loyalty && state.customer && state.redeem) {
       const unit = Number(loyaltyCfg.redeem_value || 0);
+      const minimum = Math.max(0, Number(loyaltyCfg.minimum_redeem || 0));
       const available = Math.min(state.redeem, state.customer.loyalty_points || 0);
-      redeemCents = Math.round(available * unit);
-      pointsRedeemed = available;
+      redeemCents = available >= minimum ? Math.round(available * unit) : 0;
+      pointsRedeemed = available >= minimum ? available : 0;
       const cap = net + tax + service + tip;
       if (redeemCents > cap) {
         redeemCents = cap;
@@ -276,9 +296,11 @@ export default async function posView(ctx) {
   function renderLeft() {
     clear(left);
     const cfg = state.config.pos || {};
-    const branchLabel = state.locations.length > 1
+    const showBranches = moduleOn("multi_location") && state.locations.length > 1;
+    const branchLabel = showBranches
       ? (state.locations.find((row) => row.id === state.locationId)?.name || "Branch")
       : (state.locations[0]?.name || "");
+    const heldOrders = Boolean(state.modules.holders);
     const searchInput = h("input", {
       class: "input",
       placeholder: "Search products or scan a barcode…",
@@ -306,14 +328,14 @@ export default async function posView(ctx) {
 
     left.appendChild(h("div", { class: "pos__toolbar" },
       h("div", { class: "pos__search" }, icon("search"), searchInput),
-      branchLabel ? h("button", {
+      showBranches ? h("button", {
         class: "btn btn--sm",
         type: "button",
         title: "Switch branch",
         onClick: (e) => openBranchMenu(e.currentTarget),
       }, icon("map"), h("span", {}, branchLabel)) : null,
       h("div", { class: "flex gap-2" },
-        state.holds.length
+        heldOrders && state.holds.length
           ? button(`Held (${state.holds.length})`, { size: "sm", icon: "pause", onClick: openHolds })
           : null,
         state.modules.shifts
@@ -400,7 +422,7 @@ export default async function posView(ctx) {
     const cfg = state.config.pos || {};
     const cols = Number(cfg.grid_columns) || 4;
     const available = (grid.parentElement?.clientWidth || 0) - 32;
-    const base = cols >= 6 ? 176 : cols === 5 ? 192 : cols === 4 ? 208 : 232;
+    const base = cols >= 6 ? 156 : cols === 5 ? 172 : cols === 4 ? 188 : 208;
     // Never stretch a handful of tiles across the whole pane on narrow screens.
     const minWidth = available && available < 700 ? Math.min(base, 168) : base;
     grid.style.gridTemplateColumns = `repeat(auto-fill, minmax(${minWidth}px, 1fr))`;
@@ -423,15 +445,18 @@ export default async function posView(ctx) {
       if (cfg.show_images !== false) {
         tile.appendChild(h("span", { class: "pos-tile__icon" }, productIcon(product.icon || "box")));
       }
-      const body = h("span", { class: "pos-tile__body" },
-        h("span", { class: "pos-tile__name" }, product.name),
-        h("span", { class: "pos-tile__foot" },
-          h("span", { class: "pos-tile__price" }, money(product.price_cents)),
-          cfg.show_stock !== false && product.track_stock
-            ? h("span", { class: "pos-tile__stock" }, out ? "Out" : `${fmtQty(product.stock_qty)} left`)
-            : null));
-      tile.appendChild(body);
-      if (product.is_featured) tile.appendChild(h("span", { class: "pos-tile__badge" }, icon("star")));
+      const name = h("span", { class: "pos-tile__name" }, product.name);
+      if (product.is_featured) {
+        name.appendChild(h("span", { class: "pos-tile__badge", title: "Featured" }, icon("star")));
+      }
+      const stock = cfg.show_stock !== false && product.track_stock
+        ? h("span", { class: "pos-tile__stock", title: out ? "Out of stock" : `${fmtQty(product.stock_qty)} in stock` },
+          out ? "Out" : `${fmtQty(product.stock_qty)} left`)
+        : null;
+      tile.appendChild(name);
+      tile.appendChild(h("span", { class: "pos-tile__meta" },
+        h("span", { class: "pos-tile__price" }, money(product.price_cents)),
+        stock));
       grid.appendChild(tile);
     }
   }
@@ -507,6 +532,9 @@ export default async function posView(ctx) {
               }),
               h("button", { type: "button", title: "More", onClick: () => changeQty(line, 1) }, icon("plus"))),
             h("div", { class: "grow" }),
+            state.modules.price_overrides && (hasPerm("pos.override") || (state.config.price_overrides || {}).require_pin !== false)
+              ? iconButton("edit", { size: "sm", variant: "ghost", title: "Change the price", onClick: () => openPriceOverride(line) })
+              : null,
             state.modules.order_notes
               ? iconButton("note", { size: "sm", variant: "ghost", title: "Item note", onClick: () => openLineNote(line) })
               : null,
@@ -546,12 +574,14 @@ export default async function posView(ctx) {
     foot.appendChild(actions);
 
     const payRow = h("div", { class: "flex gap-2 mt-3" });
-    payRow.appendChild(button("Hold", {
-      size: "lg",
-      icon: "pause",
-      disabled: !state.cart.length,
-      onClick: saveHold,
-    }));
+    if (moduleOn("holders")) {
+      payRow.appendChild(button("Hold", {
+        size: "lg",
+        icon: "pause",
+        disabled: !state.cart.length,
+        onClick: saveHold,
+      }));
+    }
     payRow.appendChild(button(`Charge ${money(totals.total)}`, {
       variant: "primary",
       size: "lg",
@@ -675,6 +705,56 @@ export default async function posView(ctx) {
     });
   }
 
+  function openPriceOverride(line) {
+    const cfg = state.config.price_overrides || {};
+    const limit = Math.max(0, Number(cfg.max_percent_below ?? 100));
+    const floor = Math.round(line.product.price_cents * (1 - limit / 100));
+    const priceInput = moneyInput({ value: (line.unitPrice / 100).toFixed(2) });
+    const pinInput = textInput({ type: "password", placeholder: "Manager PIN", maxlength: "12" });
+    const errorHost = h("div");
+    const instance = modal({
+      title: "Change the line price",
+      subtitle: `${line.product.name} · list ${money(line.product.price_cents)}`,
+      size: "sm",
+      body: h("div", { class: "col gap-3" }, errorHost,
+        field({
+          label: "Price",
+          control: priceInput,
+          hint: limit < 100 ? `Lowest allowed ${money(floor)} (${limit}% below list)` : "No limit set",
+        }),
+        cfg.require_pin ? field({ label: "Manager PIN", control: pinInput, hint: "A supervisor with override rights must approve." }) : null),
+      footer: [
+        button("Reset to list price", { variant: "ghost", onClick: () => {
+          line.unitPrice = line.product.price_cents;
+          line.overridePin = "";
+          instance.close();
+          renderCart();
+        } }),
+        button("Cancel", { onClick: () => instance.close() }),
+        button("Apply price", { variant: "primary", onClick: () => {
+          const cents = Math.round((Number(priceInput.value) || 0) * 100);
+          clear(errorHost);
+          if (cents <= 0) {
+            errorHost.appendChild(alertBox("Enter a price above zero.", "danger"));
+            return;
+          }
+          if (cents < floor) {
+            errorHost.appendChild(alertBox(`This price is more than ${limit}% below the list price.`, "danger"));
+            return;
+          }
+          if (cfg.require_pin && !pinInput.value.trim()) {
+            errorHost.appendChild(alertBox("A manager PIN is required for a price override.", "danger"));
+            return;
+          }
+          line.unitPrice = cents;
+          line.overridePin = cfg.require_pin ? pinInput.value.trim() : "";
+          instance.close();
+          renderCart();
+        } }),
+      ],
+    });
+  }
+
   /* --------------------------------------------------------------------- */
   /* Discount / tip / points                                                */
   /* --------------------------------------------------------------------- */
@@ -747,7 +827,9 @@ export default async function posView(ctx) {
   }
 
   function openTipModal() {
-    const presets = (state.config.tips || {}).presets || [5, 10, 15];
+    const tipsCfg = state.config.tips || {};
+    const presets = tipsCfg.presets || [5, 10, 15];
+    const allowCustom = tipsCfg.allow_custom !== false;
     const totals = computeTotals();
     const chips = h("div", { class: "chips" });
     const custom = moneyInput({ placeholder: "Custom amount" });
@@ -765,15 +847,16 @@ export default async function posView(ctx) {
     const instance = modal({
       title: "Add a tip",
       size: "sm",
-      body: h("div", { class: "col gap-3" }, chips, field({ label: "Custom tip", control: custom })),
+      body: h("div", { class: "col gap-3" }, chips,
+        allowCustom ? field({ label: "Custom tip", control: custom }) : null),
       footer: [
         state.tip ? button("Remove tip", { variant: "ghost", danger: true, onClick: () => { state.tip = 0; instance.close(); renderCart(); } }) : null,
         button("Cancel", { onClick: () => instance.close() }),
-        button("Add tip", { variant: "primary", onClick: () => {
+        allowCustom ? button("Add tip", { variant: "primary", onClick: () => {
           state.tip = Math.round((Number(custom.value) || 0) * 100);
           instance.close();
           renderCart();
-        } }),
+        } }) : null,
       ],
     });
   }
@@ -782,18 +865,25 @@ export default async function posView(ctx) {
     const cfg = state.config.loyalty || {};
     const available = state.customer?.loyalty_points || 0;
     const unit = Number(cfg.redeem_value || 0);
-    const input = textInput({ type: "number", min: "0", max: String(available), value: String(state.redeem || "") });
+    const minimum = Math.max(0, Number(cfg.minimum_redeem || 0));
+    const input = textInput({ type: "number", min: String(minimum), max: String(available), value: String(state.redeem || "") });
+    const errorHost = h("div");
     const instance = modal({
       title: "Redeem loyalty points",
       subtitle: state.customer?.name,
       size: "sm",
-      body: h("div", { class: "col gap-3" },
+      body: h("div", { class: "col gap-3" }, errorHost,
         alertBox(`${available} points available · 1 point = ${money(unit)}`, "info"),
-        field({ label: "Points to redeem", control: input, hint: `Minimum ${cfg.minimum_redeem ?? 0} points` })),
+        field({ label: "Points to redeem", control: input, hint: minimum ? `Minimum ${minimum} points` : "Any amount" })),
       footer: [
         button("Cancel", { onClick: () => instance.close() }),
         button("Redeem", { variant: "primary", onClick: () => {
           const points = Math.min(available, Math.max(0, Number(input.value) || 0));
+          if (points > 0 && points < minimum) {
+            clear(errorHost);
+            errorHost.appendChild(alertBox(`Redeem at least ${minimum} points.`, "danger"));
+            return;
+          }
           state.redeem = points;
           instance.close();
           renderCart();
@@ -920,6 +1010,63 @@ export default async function posView(ctx) {
       return Math.max(0, totals.total - paidTotal());
     }
 
+    function tenderedCents() {
+      return Math.max(0, Math.round((Number(amountInput.value) || 0) * 100));
+    }
+
+    function tenderedChange() {
+      return Math.max(0, paidTotal() + tenderedCents() - totals.total);
+    }
+
+    function updatePreview() {
+      const due = remaining();
+      const entered = tenderedCents();
+      const change = tenderedChange();
+      const outstanding = Math.max(0, due - entered);
+      const isCash = !selectedMethod || selectedMethod.type === "cash";
+      const overpayBlocked = entered > due && due > 0 && !isCash;
+
+      if (change > 0) {
+        dueLabel.textContent = "Change due";
+        dueValue.textContent = money(change);
+        dueBlock.style.background = "color-mix(in srgb, var(--success) 12%, transparent)";
+        dueBlock.style.color = "var(--success)";
+      } else if (overpayBlocked) {
+        dueLabel.textContent = "Over the balance";
+        dueValue.textContent = money(entered - due);
+        dueBlock.style.background = "var(--danger-soft)";
+        dueBlock.style.color = "var(--danger)";
+      } else if (due > 0 && outstanding === 0) {
+        dueLabel.textContent = "Ready to complete";
+        dueValue.textContent = money(0);
+        dueBlock.style.background = "color-mix(in srgb, var(--success) 12%, transparent)";
+        dueBlock.style.color = "var(--success)";
+      } else if (due > 0) {
+        dueLabel.textContent = "Still due";
+        dueValue.textContent = money(outstanding);
+        dueBlock.style.background = "var(--warning-soft)";
+        dueBlock.style.color = "var(--warning)";
+      } else {
+        dueLabel.textContent = "Paid in full";
+        dueValue.textContent = money(0);
+        dueBlock.style.background = "color-mix(in srgb, var(--success) 12%, transparent)";
+        dueBlock.style.color = "var(--success)";
+      }
+
+      submit.disabled = overpayBlocked;
+      addButton.disabled = due <= 0;
+      const label = submit.querySelector("span");
+      if (change > 0) {
+        label.textContent = `Complete sale · change ${money(change)}`;
+      } else if (overpayBlocked) {
+        label.textContent = `Complete sale · ${money(due)} due`;
+      } else if (outstanding > 0) {
+        label.textContent = `Complete sale · ${money(outstanding)} still due`;
+      } else {
+        label.textContent = `Complete sale · ${money(totals.total)}`;
+      }
+    }
+
     function refresh() {
       clear(methodGrid);
       for (const method of state.methods) {
@@ -944,18 +1091,23 @@ export default async function posView(ctx) {
           onClick: () => {
             const value = Number(amount);
             amountInput.value = (value / 100).toFixed(2);
+            updatePreview();
           },
         }, money(Number(amount))));
       }
       quickCash.appendChild(h("button", {
         type: "button",
-        onClick: () => { amountInput.value = (remaining() / 100).toFixed(2); },
+        onClick: () => { amountInput.value = (remaining() / 100).toFixed(2); updatePreview(); },
       }, "Exact"));
 
       clear(paymentsList);
       for (const [index, entry] of payments.entries()) {
         paymentsList.appendChild(h("div", { class: "flex items-center gap-2", style: { padding: "6px 0", borderBottom: "1px solid var(--border)" } },
-          h("span", { class: "grow small" }, entry.method_name),
+          h("span", { class: "grow" },
+            h("div", { class: "small" }, entry.method_name),
+            entry.change_cents
+              ? h("div", { class: "tiny dim" }, `Change ${money(entry.change_cents)}`)
+              : null),
           h("span", { class: "num small strong" }, money(entry.amount_cents)),
           iconButton("x", { size: "sm", variant: "ghost", danger: true, onClick: () => {
             payments.splice(index, 1);
@@ -963,15 +1115,7 @@ export default async function posView(ctx) {
           } })));
       }
 
-      const due = remaining();
-      dueLabel.textContent = due > 0 ? "Still due" : "Change due";
-      dueValue.textContent = money(due > 0 ? due : Math.max(0, paidTotal() - totals.total));
-      dueBlock.style.background = due > 0 ? "var(--warning-soft)" : "color-mix(in srgb, var(--success) 12%, transparent)";
-      dueBlock.style.color = due > 0 ? "var(--warning)" : "var(--success)";
-      submit.disabled = false;
-      submit.querySelector("span").textContent = due > 0
-        ? `Complete sale · ${money(paidTotal())} of ${money(totals.total)}`
-        : `Complete sale · ${money(totals.total)}`;
+      updatePreview();
     }
 
     addButton.addEventListener("click", () => {
@@ -979,6 +1123,15 @@ export default async function posView(ctx) {
       const amount = Math.round((Number(amountInput.value) || 0) * 100);
       if (amount <= 0) {
         toast("Enter an amount.", "warning");
+        return;
+      }
+      const due = remaining();
+      if (due <= 0) {
+        toast("This sale is already paid in full.", "warning");
+        return;
+      }
+      if (amount > due && selectedMethod.type !== "cash") {
+        toast(`${selectedMethod.name} cannot exceed the ${money(due)} still due.`, "warning");
         return;
       }
       if (selectedMethod.requires_reference && !referenceInput.value.trim()) {
@@ -990,6 +1143,7 @@ export default async function posView(ctx) {
         method_name: selectedMethod.name,
         amount_cents: amount,
         tendered_cents: amount,
+        change_cents: Math.max(0, amount - due),
         reference: referenceInput.value.trim(),
       });
       referenceInput.value = "";
@@ -1004,13 +1158,20 @@ export default async function posView(ctx) {
       }
       const due = remaining();
       if (due > 0) {
-        const amount = Math.round((Number(amountInput.value) || 0) * 100);
+        const amount = tenderedCents();
+        if (amount > due && selectedMethod.type !== "cash") {
+          clear(errorHost);
+          errorHost.appendChild(alertBox(
+            `${selectedMethod.name} cannot exceed the ${money(due)} still due.`, "danger"));
+          return;
+        }
         if (amount > 0) {
           payments.push({
             method_id: selectedMethod.id,
             method_name: selectedMethod.name,
             amount_cents: amount,
             tendered_cents: amount,
+            change_cents: Math.max(0, amount - due),
             reference: referenceInput.value.trim(),
           });
         }
@@ -1028,6 +1189,7 @@ export default async function posView(ctx) {
             product_id: line.product.id,
             qty: line.qty,
             unit_price_cents: line.unitPrice,
+            override_pin: line.overridePin || "",
             discount_cents: line.discount || 0,
             note: line.note || "",
           })),
@@ -1062,7 +1224,7 @@ export default async function posView(ctx) {
 
     const paymentModal = modal({
       title: "Take payment",
-      subtitle: `${number(totals.itemCount, 0)} items · ${money(totals.total)}`,
+      subtitle: `${number(totals.itemCount, 0)} ${totals.itemCount === 1 ? "item" : "items"} · ${money(totals.total)}`,
       size: "md",
       body: h("div", { class: "col gap-3" },
         errorHost,
@@ -1075,6 +1237,7 @@ export default async function posView(ctx) {
       footer: [button("Cancel", { onClick: () => paymentModal.close() }), submit],
     });
     amountInput.value = (totals.total / 100).toFixed(2);
+    amountInput.addEventListener("input", updatePreview);
     referenceField.classList.toggle("hidden", !selectedMethod?.requires_reference);
     refresh();
   }
@@ -1094,7 +1257,12 @@ export default async function posView(ctx) {
         button("New sale", { variant: "primary", icon: "plus", onClick: () => instance.close() }),
       ],
     });
-    if ((state.config.pos || {}).auto_print) printReceipt(sale.id);
+    if (AUTO_PRINT()) printReceipt(sale.id);
+    const openedDrawer = (sale.payments || []).some((payment) => payment.opens_drawer);
+    if (openedDrawer) {
+      window.dispatchEvent(new CustomEvent("pos:drawer-open", { detail: { saleId: sale.id } }));
+      toast("Cash drawer opened.", "info");
+    }
   }
 
   function openBranchMenu(anchor) {
@@ -1224,18 +1392,21 @@ export default async function posView(ctx) {
     } catch { /* ignore */ }
     const counted = moneyInput({ placeholder: "0.00" });
     const notes = textarea({ rows: 2, placeholder: "Notes for the day (optional)" });
+    const countsRequired = (state.config.shifts || {}).count_payments !== false;
     const instance = modal({
       title: "Close cash drawer",
       subtitle: state.shift ? `Opened ${date(state.shift.opened_at)}` : "",
       size: "sm",
       body: h("div", { class: "col gap-3" },
         h("div", { class: "change-due" }, h("span", {}, "Expected cash"), h("span", { class: "num" }, money(summary.expected_cash_cents || 0))),
-        field({ label: "Counted cash", control: counted }),
+        field({ label: "Counted cash", control: counted, hint: countsRequired ? "Required — enter the exact amount counted." : "Optional." }),
         field({ label: "Notes", control: notes })),
       footer: [button("Cancel", { onClick: () => instance.close() }),
         button("Close drawer", { variant: "primary", onClick: async () => {
           try {
-            await post(`/shifts/${state.shift.id}/close`, { counted_cash: Number(counted.value) || 0, notes: notes.value });
+            const payload = { notes: notes.value };
+            if (counted.value !== "") payload.counted_cash = Number(counted.value) || 0;
+            await post(`/shifts/${state.shift.id}/close`, payload);
             instance.close();
             state.shift = null;
             toast("Drawer closed.", "success");
@@ -1305,6 +1476,8 @@ export default async function posView(ctx) {
   }
   document.addEventListener("keydown", onKeyDown);
   load().catch((error) => {
+    loadingSkeleton.remove();
+    el.classList.remove("is-loading");
     clear(el);
     el.appendChild(alertBox(error.message, "danger"));
   });

@@ -108,6 +108,30 @@ class Config:
     # Set to 0 to disable caching (handy while developing).
     REPORT_CACHE_SECONDS = int(os.environ.get("POS_REPORT_CACHE_SECONDS", "60"))
 
+    # WhatsApp Cloud API. The phone-number ID and token are enough to send;
+    # the business number is only used for display.
+    WHATSAPP_PHONE_NUMBER_ID = (
+        os.environ.get("WHATSAPP_PHONE_NUMBER_ID") or os.environ.get("WA_PHONE_NUMBER_ID")
+        or os.environ.get("WA_ID") or ""
+    )
+    WHATSAPP_ACCESS_TOKEN = (
+        os.environ.get("WHATSAPP_ACCESS_TOKEN") or os.environ.get("WHATSAPP_TOKEN")
+        or os.environ.get("WA_TOKEN") or ""
+    )
+    WHATSAPP_BUSINESS_NUMBER = (
+        os.environ.get("WHATSAPP_BUSINESS_NUMBER") or os.environ.get("WA_NUMBER") or ""
+    )
+    WHATSAPP_API_VERSION = os.environ.get("WHATSAPP_API_VERSION", "v23.0")
+    WHATSAPP_TEMPLATE_NAME = os.environ.get("WHATSAPP_TEMPLATE_NAME", "")
+    WHATSAPP_TEMPLATE_LANGUAGE = os.environ.get("WHATSAPP_TEMPLATE_LANGUAGE", "en")
+    WHATSAPP_DRY_RUN = _env_bool("POS_WHATSAPP_DRY_RUN", False)
+
+    # The in-process 6pm dispatcher is safe with multiple gunicorn workers
+    # because report_dispatches is unique per company/day. Render enables it;
+    # tests keep it off.
+    DAILY_REPORT_SCHEDULER = _env_bool("POS_DAILY_REPORT_SCHEDULER", False)
+    DAILY_REPORT_HOUR = int(os.environ.get("POS_DAILY_REPORT_HOUR", "18"))
+
 
 class TestConfig(Config):
     TESTING = True

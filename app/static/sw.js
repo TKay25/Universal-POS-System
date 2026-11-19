@@ -5,7 +5,7 @@
  * /api/ is never cached — sales, tickets and customer records stay on the server.
  */
 
-const VERSION = "pos-v1";
+const VERSION = "pos-v2";
 const SHELL_CACHE = `${VERSION}-shell`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 

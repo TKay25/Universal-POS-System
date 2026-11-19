@@ -7,7 +7,7 @@ import { get, downloadFile } from "../core/http.js";
 import { hasPerm, moduleConfig } from "../core/store.js";
 import {
   pageHeader, sectionCard, button, table, badge, alertBox, statCard, emptyState, toast, segmented,
-  field, textInput, select,
+  field, textInput, select, skeletonCards,
 } from "../core/ui.js";
 import { areaChart, donutChart, barList, legend, heatStrip } from "../core/charts.js";
 import { withButtonSpinner, busyOverlay } from "../core/loading.js";
@@ -99,7 +99,7 @@ export default async function reportsView(ctx) {
 
   async function load() {
     clear(content);
-    content.appendChild(h("div", { class: "loading-block" }, h("div", { class: "spinner" })));
+    content.appendChild(skeletonCards({ label: "Loading report" }));
     try {
       if (!registry.length) {
         const catalog = await get("/reports/catalog");

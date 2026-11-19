@@ -69,6 +69,7 @@ DEFAULT_SETTINGS: dict = {
         "company_reg_number": "",
         "email": "",
         "phone": "",
+        "whatsapp_number": "",
         "website": "",
         "address": "",
         "city": "",
@@ -115,6 +116,23 @@ DEFAULT_SETTINGS: dict = {
     },
 }
 
+# Per-user preferences. Blank strings mean "follow the workspace setting".
+DEFAULT_PREFERENCES: dict = {
+    "theme": "",              # "" | light | dark
+    "density": "",            # "" | comfortable | compact
+    "sidebar": "",            # "" | expanded | collapsed
+    "dashboard_widgets": None,  # None = use the workspace dashboard, [] = show none
+    "pos": {
+        "sound_enabled": None,  # None = follow the workspace module config
+        "auto_print": None,     # None = follow the workspace module config
+    },
+}
+
+PREFERENCE_THEMES = {"", "light", "dark"}
+PREFERENCE_DENSITIES = {"", "comfortable", "compact"}
+PREFERENCE_SIDEBARS = {"", "expanded", "collapsed"}
+
+
 DASHBOARD_WIDGETS = [
     {"key": "sales_today", "name": "Sales today", "size": "sm"},
     {"key": "transactions_today", "name": "Transactions today", "size": "sm"},
@@ -142,3 +160,7 @@ def deep_merge(base: dict, patch: dict) -> dict:
 
 def default_settings() -> dict:
     return deepcopy(DEFAULT_SETTINGS)
+
+
+def default_preferences() -> dict:
+    return deepcopy(DEFAULT_PREFERENCES)
