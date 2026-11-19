@@ -12,10 +12,25 @@ from tests.conftest import csrf
 from tests.test_api import bootstrap, checkout, create_product
 
 
+def add_teammate(client, headers, number="+263 77 123 4567", name="Tariro Moyo", email="tariro@team.test"):
+    """Recipients are teammates: the WhatsApp number lives on the team record."""
+    users = client.get("/api/company/users", headers=headers).get_json()
+    roles = {role["name"]: role["id"] for role in users["roles"]}
+    response = client.post(
+        "/api/company/users",
+        json={"full_name": name, "email": email, "whatsapp": number, "role_id": roles["Manager"]},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.get_json()
+    return response.get_json()["item"]
+
+
 def add_recipient(client, headers, number="+263 77 123 4567", name="Tariro Moyo"):
+    user = add_teammate(client, headers, number=number, name=name,
+                        email=f"{name.lower().replace(' ', '.')}@team.test")
     response = client.post(
         "/api/company/report-recipients",
-        json={"name": name, "whatsapp_number": number, "role_label": "Owner"},
+        json={"user_id": user["id"], "role_label": "Owner"},
         headers=headers,
     )
     assert response.status_code == 201, response.get_json()
@@ -58,13 +73,22 @@ def test_report_recipients_crud_and_duplicate_block(client, owner):
     created = add_recipient(client, headers)
     assert created["whatsapp_number"] == "+263771234567"
 
+    # The same teammate cannot be subscribed twice.
     duplicate = client.post(
         "/api/company/report-recipients",
-        json={"name": "Another name", "whatsapp_number": "0771234567"},
+        json={"user_id": created["user_id"]},
         headers=headers,
     )
     assert duplicate.status_code == 422
     assert duplicate.get_json()["error"]["fields"]
+
+    # Someone who is not a teammate has no number on file, so cannot be added.
+    outsider = client.post(
+        "/api/company/report-recipients",
+        json={"user_id": 999999},
+        headers=headers,
+    )
+    assert outsider.status_code in (404, 422)
 
     updated = client.patch(
         f"/api/company/report-recipients/{created['id']}",

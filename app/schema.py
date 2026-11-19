@@ -13,6 +13,7 @@ from app.extensions import db
 COLUMN_UPGRADES = (
     ("categories", "icon", "VARCHAR(40)"),
     ("users", "must_change_password", "BOOLEAN DEFAULT FALSE"),
+    ("users", "whatsapp", "VARCHAR(40)"),
 )
 
 

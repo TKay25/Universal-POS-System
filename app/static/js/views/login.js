@@ -5,7 +5,7 @@ import { icon } from "../core/icons.js";
 import { store, applyBranding } from "../core/store.js";
 import { post } from "../core/http.js";
 import { button, field, textInput, select, alertBox, segmented } from "../core/ui.js";
-import { installApp, isStandalone } from "../core/pwa.js";
+import { installApp, canInstall } from "../core/pwa.js";
 
 const CURRENCIES = [
   { value: "USD|$", label: "US Dollar ($)" },
@@ -194,7 +194,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       h("h1", { class: "auth__headline" }, "One POS. Every business. Your rules."),
       h("p", { class: "auth__lead" },
         "Start with a complete point of sale, then switch on the modules you need — inventory, loyalty, tips, multi-location, custom workspaces and more. Every screen, colour and receipt is yours to shape."),
-      isStandalone() ? null : installRow("hero"),
+      canInstall() ? installRow("hero") : null,
       h("div", { class: "auth__points" },
         point("sparkles", "Compose your own POS", "Enable only the modules you sell with, and configure each one."),
         point("palette", "Brand every pixel", "Colours, logo, receipts and dashboards follow your brand."),
@@ -209,7 +209,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
         tabsHost,
         errorHost,
         formHost,
-        isStandalone() ? null : installRow("card"))));
+        canInstall() ? installRow("card") : null)));
 }
 
 function installRow(variant) {
@@ -217,10 +217,10 @@ function installRow(variant) {
     h("div", { class: "auth__install-copy" },
       h("div", { class: "auth__install-title" }, "Install Universal POS"),
       h("div", { class: "auth__install-hint" }, "Opens full screen with its own icon — offline shell included.")),
-    button("Install app", {
+    button("Install", {
       icon: "download",
       size: "sm",
-      variant: "ghost",
+      variant: "primary",
       onClick: () => installApp(),
     }));
 }

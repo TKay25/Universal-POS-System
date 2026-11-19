@@ -710,6 +710,48 @@ def list_users():
     )
 
 
+def _normalise_whatsapp(raw: str) -> str:
+    """Store WhatsApp numbers in one canonical form so the 6pm report always delivers."""
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    from app.services import whatsapp
+
+    try:
+        return whatsapp.normalise_number(value)
+    except ValueError as error:
+        raise bad_request(str(error), {"whatsapp": str(error)}) from error
+
+
+def _sync_report_recipient(user) -> None:
+    """A teammate is the source of truth for their name, role and number."""
+    from app.models import ReportRecipient
+
+    row = ReportRecipient.query.filter_by(company_id=user.company_id, user_id=user.id).first()
+    if row is None:
+        return
+    row.name = user.full_name
+    row.email = user.email
+    if user.role is not None:
+        row.role_label = user.role.name
+    if user.whatsapp:
+        row.whatsapp_number = user.whatsapp
+
+
+def _claim_report_recipient(user) -> None:
+    """Link a recipient record that already used this number to the new teammate."""
+    if not user.whatsapp:
+        return
+    from app.models import ReportRecipient
+
+    row = ReportRecipient.query.filter_by(
+        company_id=user.company_id, whatsapp_number=user.whatsapp
+    ).first()
+    if row is not None and row.user_id is None:
+        row.user_id = user.id
+        _sync_report_recipient(user)
+
+
 @bp.post("/users")
 @login_required
 @company_required
@@ -724,6 +766,7 @@ def create_user():
             "password": {"type": "text", "default": "", "min_len": 8, "trim": False, "label": "Password"},
             "role_id": {"type": "int", "required": True, "label": "Role"},
             "phone": {"type": "str", "default": "", "max_len": 40},
+            "whatsapp": {"type": "str", "default": "", "max_len": 40, "label": "WhatsApp number"},
             "pin": {"type": "text", "default": "", "max_len": 12, "trim": False},
             "status": {"type": "str", "default": "active", "choices": ["active", "invited", "disabled"]},
             "avatar_color": {"type": "str", "default": "#5b5bd6", "max_len": 20},
@@ -739,6 +782,7 @@ def create_user():
             f"{clash.email} already belongs to {clash.full_name} in {where}.",
             {"email": "That email already has an account."},
         )
+    whatsapp_number = _normalise_whatsapp(payload.get("whatsapp"))
     role = get_scoped(Role, payload["role_id"], company.id)
     temporary_password = payload["password"] or generate_temp_password()
     user = User(
@@ -747,6 +791,7 @@ def create_user():
         email=email,
         full_name=payload["full_name"],
         phone=payload["phone"],
+        whatsapp=whatsapp_number,
         status=payload["status"],
         avatar_color=payload["avatar_color"],
         must_change_password=True,
@@ -755,6 +800,8 @@ def create_user():
     if payload.get("pin"):
         user.set_pin(payload["pin"])
     db.session.add(user)
+    db.session.flush()
+    _claim_report_recipient(user)
     db.session.commit()
     audit("user.created", entity="user", entity_id=user.id,
           summary=f"Added {user.full_name} as {role.name}", commit=True)
@@ -801,6 +848,7 @@ def update_user(user_id: int):
             "email": {"type": "email", "max_len": 180},
             "role_id": {"type": "int"},
             "phone": {"type": "str", "max_len": 40},
+            "whatsapp": {"type": "str", "max_len": 40},
             "status": {"type": "str", "choices": ["active", "invited", "disabled"]},
             "password": {"type": "text", "min_len": 8, "trim": False},
             "pin": {"type": "text", "max_len": 12, "trim": False},
@@ -822,12 +870,16 @@ def update_user(user_id: int):
     for field in ("full_name", "phone", "status", "avatar_color"):
         if field in payload:
             setattr(user, field, payload[field])
+    if "whatsapp" in payload:
+        user.whatsapp = _normalise_whatsapp(payload["whatsapp"])
     if payload.get("password"):
         user.set_password(payload["password"])
         # A password set by someone else is temporary by definition.
         user.must_change_password = True
     if "pin" in payload:
         user.set_pin(payload["pin"] or None)
+    db.session.flush()
+    _sync_report_recipient(user)
     db.session.commit()
     audit("user.updated", entity="user", entity_id=user.id, summary=f"Updated {user.full_name}", commit=True)
     return jsonify({"item": user.to_dict(include_company=False)})

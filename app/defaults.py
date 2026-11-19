@@ -136,7 +136,7 @@ PREFERENCE_SIDEBARS = {"", "expanded", "collapsed"}
 DASHBOARD_WIDGETS = [
     {"key": "sales_today", "name": "Sales today", "size": "sm"},
     {"key": "transactions_today", "name": "Transactions today", "size": "sm"},
-    {"key": "average_ticket", "name": "Average ticket", "size": "sm"},
+    {"key": "average_ticket", "name": "Gross profit", "size": "sm"},
     {"key": "low_stock", "name": "Low stock items", "size": "sm"},
     {"key": "sales_chart", "name": "Sales trend", "size": "lg"},
     {"key": "payment_mix", "name": "Payment mix", "size": "md"},

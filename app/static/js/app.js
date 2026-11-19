@@ -334,6 +334,13 @@ async function boot() {
   }
 
   if (isAuthed()) {
+    // An installed app always opens on the login screen for the new launch; a
+    // session that carries on inside the same window stays signed in.
+    if (isStandalone() && !launchAlreadyHandled()) {
+      markLaunchHandled();
+      renderAuth();
+      return;
+    }
     // Signed-in users always land on a real screen, never on the sign-in hash.
     const hash = window.location.hash.replace(/^#/, "");
     if (!hash || hash === "/login" || hash === "/register") {
@@ -346,8 +353,25 @@ async function boot() {
     }
     renderShell();
   } else {
+    if (isStandalone()) markLaunchHandled();
     renderAuth();
   }
+}
+
+const LAUNCH_KEY = "pos:launch";
+
+function launchAlreadyHandled() {
+  try {
+    return window.sessionStorage.getItem(LAUNCH_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markLaunchHandled() {
+  try {
+    window.sessionStorage.setItem(LAUNCH_KEY, "1");
+  } catch { /* private mode: the installed app simply asks every time */ }
 }
 
 /* The installed app opens from its cache, so the first thing a user sees

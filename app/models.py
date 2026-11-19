@@ -195,6 +195,7 @@ class User(TimestampMixin, Base):
     password_hash = db.Column(db.String(255), nullable=False)
     full_name = db.Column(db.String(120), nullable=False)
     phone = db.Column(db.String(40), default="")
+    whatsapp = db.Column(db.String(40), default="")
     status = db.Column(db.String(20), default="active", nullable=False)  # active|invited|disabled
     is_developer = db.Column(db.Boolean, default=False, nullable=False)
     must_change_password = db.Column(db.Boolean, default=False, nullable=False)
@@ -274,6 +275,7 @@ class User(TimestampMixin, Base):
             "email": self.email,
             "full_name": self.full_name,
             "phone": self.phone,
+            "whatsapp": self.whatsapp or "",
             "status": self.status,
             "is_developer": self.is_developer,
             "pin_enabled": bool(self.pin_hash),

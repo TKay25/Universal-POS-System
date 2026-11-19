@@ -141,10 +141,15 @@ export default async function dashboardView(ctx) {
         foot: `${number(cards.items_sold, 1)} items sold`, tone: "accent",
       }));
     }
-    if (widgets.has("average_ticket")) {
+    if (widgets.has("average_ticket") || widgets.has("gross_profit")) {
+      const sales = Number(cards.sales_cents || 0);
+      const gross = Number(cards.gross_profit_cents || 0);
       kpis.push(statCard({
-        label: "Average ticket", value: money(cards.average_ticket_cents), icon: "trend",
-        foot: `Gross profit ${money(cards.gross_profit_cents)}`, tone: "success",
+        label: "Gross profit",
+        value: money(gross),
+        icon: "trend",
+        foot: `${sales ? ((gross / sales) * 100).toFixed(1) : "0.0"}% margin · ${money(cards.average_ticket_cents)} avg sale`,
+        tone: "success",
       }));
     }
     if (widgets.has("low_stock")) {
@@ -276,7 +281,10 @@ export default async function dashboardView(ctx) {
   function renderInsights(data) {
     const growth = data.revenue.growth_percent;
     const periodLabel = data.period?.label || "Last 30 days";
-    const wrap = h("div", { class: "grid grid--3 mb-4" });
+    /* Cards vary a lot in height, so a plain grid leaves holes. Collect them first,
+     then stack them into the shortest column - no empty cells at any width. */
+    const cards = [];
+    const addCard = (node) => cards.push(node);
 
     const card = (title, subtitle, body) => sectionCard({ title, subtitle, body });
 
@@ -288,7 +296,7 @@ export default async function dashboardView(ctx) {
         h("div", { class: "small strong num" }, money(row.revenue_cents)),
         h("div", { class: `tiny ${tone || "dim"}` }, `${money(row.profit_cents)} profit`)));
 
-    wrap.appendChild(card("Revenue boost", periodLabel, h("div", { class: "col gap-3" },
+    addCard(card("Revenue boost", periodLabel, h("div", { class: "col gap-3" },
       h("div", { class: "flex items-end justify-between" },
         h("div", { class: "kpi__value", style: { fontSize: "22px" } }, money(data.revenue.last_30_cents)),
         growth == null
@@ -304,19 +312,19 @@ export default async function dashboardView(ctx) {
         badge(`${data.metrics?.discount_rate ?? 0}% discounts`, "info"),
         badge(`${data.metrics?.refund_rate ?? 0}% refunds`, (data.metrics?.refund_rate || 0) >= 3 ? "warning" : "success")))));
 
-    wrap.appendChild(card("Top 3 products", `${periodLabel} · revenue and profit`, h("div", { class: "col gap-2" },
+    addCard(card("Top 3 products", `${periodLabel} · revenue and profit`, h("div", { class: "col gap-2" },
       (data.top_products || data.product_performance?.top || []).slice(0, 3).map((row) => productRow(row)),
       !(data.top_products || []).length ? h("div", { class: "small dim" }, "No product sales in this period yet.") : null)));
 
-    wrap.appendChild(card("Watchlist · lowest 3", `${periodLabel} · review price, placement or promotion`, h("div", { class: "col gap-2" },
+    addCard(card("Watchlist · lowest 3", `${periodLabel} · review price, placement or promotion`, h("div", { class: "col gap-2" },
       (data.least_products || data.product_performance?.least || []).slice(0, 3).map((row) => productRow(row, "warning")),
       !(data.least_products || []).length ? h("div", { class: "small dim" }, "Not enough product history to rank yet.") : null)));
 
-    wrap.appendChild(card("Profit leaders", `${periodLabel} · revenue minus buying price`, barList({
+    addCard(card("Profit leaders", `${periodLabel} · revenue minus buying price`, barList({
       rows: (data.profit_leaders || []).map((row) => ({ label: row.name, value: row.profit_cents })),
     })));
 
-    wrap.appendChild(card("Needs attention", "Slow movers, stock and lay-bys", h("div", { class: "col gap-2" },
+    addCard(card("Needs attention", "Slow movers, stock and lay-bys", h("div", { class: "col gap-2" },
       (data.slow_movers || []).slice(0, 3).map((row) => h("div", { class: "flex items-center gap-2" },
         h("div", { class: "grow", style: { minWidth: 0 } },
           h("div", { class: "truncate small strong" }, row.name),
@@ -328,7 +336,7 @@ export default async function dashboardView(ctx) {
         : null)));
 
     if ((data.branches || []).length > 1) {
-      wrap.appendChild(card("Branch performance", `${periodLabel} · cross-shop comparison`, barList({
+      addCard(card("Branch performance", `${periodLabel} · cross-shop comparison`, barList({
         rows: (data.branches || []).slice(0, 6).map((row) => ({ label: row.name, value: row.revenue_cents })),
       })));
     }
@@ -347,12 +355,84 @@ export default async function dashboardView(ctx) {
         h("div", { class: "flex gap-2 mt-1" },
           button("Open reports", { size: "sm", icon: "chart", onClick: () => ctx.navigate("/reports") }),
           button("Manage stock", { size: "sm", variant: "ghost", icon: "layers", onClick: () => ctx.navigate("/inventory") }))));
-    wrap.appendChild(tipsCard);
+    addCard(tipsCard);
+
+    // Balanced masonry: cards differ wildly in height, so weigh them by their
+    // rendered height once mounted and stack each into the shortest column.
+    const wrap = h("div", { class: `dash-masonry dash-masonry--${cockpitColumns()}` }, cards);
+    wrap._cards = cards;
+    queueMicrotask(() => balanceMasonry(wrap));
+
     return h("div", {}, h("div", { class: "flex items-center gap-2 mb-2 wrap" },
       h("div", { class: "settings-card__title" }, "Management cockpit"),
       badge("All-round view", "primary"),
       h("span", { class: "tiny dim" }, `${data.branch?.name || "All branches"} · ${periodLabel}`)),
     wrap);
+  }
+
+  function cockpitColumns() {
+    const width = window.innerWidth || 1440;
+    if (width < 860) return 1;
+    if (width < 1280) return 2;
+    return 3;
+  }
+
+  /* Re-flow a mounted cockpit: measure every card, then deal them
+     tallest-first into whichever column is currently shortest. */
+  function balanceMasonry(wrap) {
+    if (!wrap?.isConnected) return;
+    const columnCount = cockpitColumns();
+    const nodes = (wrap._cards || []).filter((node) => node);
+    if (!nodes.length) return;
+    // Flatten first so cards are measured at the new column width before dealing.
+    wrap.className = `dash-masonry dash-masonry--${columnCount}`;
+    wrap.replaceChildren(...nodes);
+    const heights = nodes.map((node) => node.getBoundingClientRect().height || node.offsetHeight || 0);
+    const gap = parseFloat(getComputedStyle(wrap).rowGap || "0") || 0;
+    const columns = Array.from({ length: columnCount }, () => ({ height: 0, nodes: [] }));
+    const pairs = nodes.map((node, index) => ({ node, height: heights[index] }));
+    pairs
+      .slice()
+      .sort((a, b) => b.height - a.height)
+      .forEach(({ node, height }) => {
+        const target = columns.reduce((best, column) => (column.height < best.height ? column : best), columns[0]);
+        target.nodes.push(node);
+        target.height += height + gap;
+      });
+
+    // Greedy leaves a ragged bottom when one card is much taller than the rest;
+    // hand the last card of the tallest column to the shortest while it helps.
+    const measured = new Map(pairs.map((pair) => [pair.node, pair.height + gap]));
+    for (let step = 0; step < columnCount * 2; step += 1) {
+      const tallest = columns.reduce((a, b) => (a.height > b.height ? a : b));
+      const shortest = columns.reduce((a, b) => (a.height < b.height ? a : b));
+      if (tallest === shortest || tallest.nodes.length <= 1) break;
+      const candidate = tallest.nodes[tallest.nodes.length - 1];
+      const size = measured.get(candidate) || 0;
+      const spreadNow = tallest.height - shortest.height;
+      const spreadAfter = Math.abs((tallest.height - size) - (shortest.height + size));
+      if (spreadAfter >= spreadNow) break;
+      tallest.nodes.pop();
+      tallest.height -= size;
+      shortest.nodes.push(candidate);
+      shortest.height += size;
+    }
+
+    wrap.replaceChildren(...columns.map((column) => h("div", { class: "dash-masonry__col" }, column.nodes)));
+
+    if (wrap._masonryResize) return;
+    wrap._masonryResize = true;
+    let frame = 0;
+    const onResize = () => {
+      if (!wrap.isConnected) {
+        window.removeEventListener("resize", onResize);
+        wrap._masonryResize = false;
+        return;
+      }
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => balanceMasonry(wrap));
+    };
+    window.addEventListener("resize", onResize, { passive: true });
   }
 
   function renderOnboarding(data) {

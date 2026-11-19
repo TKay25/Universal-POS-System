@@ -61,13 +61,16 @@ in `pg_stat_activity`).
 
 ## Daily executive summary (WhatsApp)
 
-Every company can have any number of **report recipients** — people who do not sign in
-but receive a WhatsApp executive summary at **18:00 company time**. It covers today vs
+Every company can have any number of **report recipients**. Recipients are **teammates**: a
+report can only go to someone already on the team, whose **WhatsApp number is captured when
+they are added** (Settings → Team) and reused for the 6pm summary. Each recipient receives a
+WhatsApp executive summary at **18:00 company time**. It covers today vs
 yesterday and the same weekday last week, week-to-date vs last week and the best week
 this year, month-to-date vs last month and the best month, year-to-date vs last year,
 top 3 products for today, this week and this month, a lowest-3 watchlist, payment mix,
 branch performance, **sales and profit for every team member today**, and management
-advice. Recipients are managed in **Settings → Report recipients**.
+advice. Numbers are never typed twice: subscribing a teammate in
+**Settings → Report recipients** simply picks them from the team list.
 
 WhatsApp Cloud API credentials live only in the server environment:
 
@@ -209,10 +212,11 @@ lists them — use this table instead.
 - **Roles & permissions** — the first user of a company becomes **Administrator**. Admins
   appoint staff, add/remove ordinary users, edit stock and settings. Administrators cannot
   remove other administrators; only platform staff can.
-- **Inviting a teammate** — Settings → Team → *Add teammate* asks only for name, email and
-  role. Emails are unique across the whole platform, so inviting an address that already has
-  an account (in this workspace or another) is refused with a clear message instead of
-  creating a second login. The API generates a short, unambiguous **temporary password**
+- **Inviting a teammate** — Settings → Team → *Add teammate* asks for name, email,
+  **WhatsApp number** and role (the number feeds the 6pm executive summary) and can be
+  edited later. Emails are unique across the whole platform, so inviting an address that
+  already has an account (in this workspace or another) is refused with a clear message
+  instead of creating a second login. The API generates a short, unambiguous **temporary password**
   (`Up-…`) and shows it once with a copy button; the teammate signs in with it and must
   choose their own password before the workspace opens. *Reset password* re-issues a
   temporary password the same way, and any password an admin sets is treated as temporary
@@ -267,7 +271,12 @@ lists them — use this table instead.
 
 Dashboard quick insights compute revenue growth, top 3 products, lowest-3 watchlist,
 profit leaders, slow movers, restock value, branch performance, busiest hour, lay-by
-exposure and a broad list of management actions. The Reports tab ships sales, products,
+exposure and a broad list of management actions. The cockpit tiles are laid out as a
+measured masonry — each card is placed into the shortest column, so wide screens show
+three tight columns with no dead cells, and the layout re-flows when the window or sidebar
+changes width. The KPI strip leads with sales today, transactions and **gross profit**
+(with margin and average sale in the footnote), so profit — not ticket size — is always in
+view. The Reports tab ships sales, products,
 categories, payments, tax, cashiers, inventory valuation, **low stock**, stock movements,
 customers, refunds, cash drawer, lay-bys, branches and suppliers — with local date ranges,
 the global branch filter and a **user filter** that starts on *All users* and can be
@@ -353,6 +362,15 @@ A slim gradient progress bar tracks route changes, long actions show a dimmed bu
 and save/export buttons spin in place. Modal and drawer primary actions spin automatically
 until the request finishes or an error appears.
 
+### Look and feel
+
+The shell sits on one calm ambient backdrop (`--bg-glow` plus a faint `--pattern-ink` dot
+grid in `app.css`) shared by the sign-in screen, the desktop shell, the phone shell and the
+boot splash: three soft colour washes in the brand palette, a 22 px dot grid, and — on the
+sign-in art panel — a masked blueprint grid with a slow drifting glow. Everything else is
+painted on opaque surfaces, so contrast and dark mode are unaffected; the tiled layer drops
+out under `prefers-reduced-data`, and the drift stops under `prefers-reduced-motion`.
+
 ### Phone app
 
 On screens up to 820 px wide the app switches to a phone shell: an app bar with the company
@@ -395,10 +413,14 @@ icon, a full-screen window and a cached shell that opens without a connection.
   tickets and customer records only ever come from the server. Losing the connection shows
   the offline panel with **Try again** (and an automatic retry on `online`) instead of a
   browser error page.
-- **Install entry points** — the account menu (desktop and phone shells) and the sign-in
-  card carry an **Install app** action. Where the browser offers `beforeinstallprompt` it
-  opens the native flow; otherwise it explains the platform's manual steps (iOS
-  Share → *Add to Home Screen*, Android menu → *Install app*, desktop address-bar icon).
+- **One-click install** — the account menu (desktop and phone shells) and the sign-in card
+  offer **Install app**, and only when the browser has actually handed over its
+  `beforeinstallprompt` event: one click runs the native flow, no steps to follow. Installed
+  windows open on the **sign-in screen** every launch (the browser session may still be
+  live, but an installed app starts at login like any other terminal app); a refresh inside
+  the same window keeps the session. iOS is the one platform that has no programmatic
+  install, so there the single line *Tap Share → Add to Home Screen* is shown instead of a
+  step list.
 - **Branding follows the theme** — `<meta name="theme-color">` is rewritten on every theme
   or branding change so the installed window's title bar matches the app surface.
 - Icons live in `app/static/icons/` (`icon-192`, `icon-512`, `icon-maskable-*`,

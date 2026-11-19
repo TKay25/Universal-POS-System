@@ -319,7 +319,11 @@ SECTION_RENDERERS.general = async (host) => {
         field({ label: "Legal / trading name", control: legalName }),
         field({ label: "VAT registration number", control: taxNumber, hint: "ZIMRA VAT number, printed on receipts" }),
         field({ label: "Company registration number", control: companyRegNumber, hint: "Registrar of Companies number" }),
-        field({ label: "Phone", control: phone }),
+        formGrid([
+          field({ label: "Phone", control: phone }),
+          field({ label: "WhatsApp", control: whatsapp, required: !isEdit,
+            hint: "Used for the 6pm executive summary." }),
+        ]),
         field({ label: "WhatsApp number", control: whatsapp, hint: "For the 6pm executive summary. Include the country code." }),
         field({ label: "Email", control: email }),
         field({ label: "Website", control: website }),
@@ -1308,7 +1312,11 @@ SECTION_RENDERERS.locations = async (host) => {
       body: h("div", { class: "col gap-3" }, errorHost,
         formGrid([field({ label: "Branch name", control: name, required: true }), field({ label: "Code", control: code })]),
         field({ label: "Address", control: address }),
-        field({ label: "Phone", control: phone }),
+        formGrid([
+          field({ label: "Phone", control: phone }),
+          field({ label: "WhatsApp", control: whatsapp, required: !isEdit,
+            hint: "Used for the 6pm executive summary." }),
+        ]),
         isDefault, isActive),
       footer: [button("Cancel", { onClick: () => instance.close() }), button(branch ? "Save branch" : "Add branch", { variant: "primary", onClick: async () => {
         try {
@@ -1394,6 +1402,8 @@ SECTION_RENDERERS.users = async (host) => {
               h("div", { class: "tiny dim" }, user.email))),
         },
         { key: "role", label: "Role", render: (user) => badge(user.role || "No role", "primary") },
+        { key: "whatsapp", label: "WhatsApp", priority: "low",
+          render: (user) => (user.whatsapp ? h("span", { class: "num small" }, user.whatsapp) : h("span", { class: "dim" }, "\u2014")) },
         { key: "pin_enabled", label: "PIN", priority: "low", render: (user) => (user.pin_enabled ? badge("Set", "success") : h("span", { class: "dim" }, "—")) },
         {
           key: "status", label: "Status",
@@ -1466,6 +1476,11 @@ SECTION_RENDERERS.users = async (host) => {
     const fullName = textInput({ value: user?.full_name || "", placeholder: "Full name" });
     const email = textInput({ type: "email", value: user?.email || "", placeholder: "name@company.com" });
     const phone = textInput({ value: user?.phone || "", placeholder: "Phone" });
+    const whatsapp = textInput({
+      value: user?.whatsapp || "",
+      placeholder: "+263 77 123 4567",
+      attrs: { inputmode: "tel" },
+    });
     const role = select({ value: user?.role_id || roles[0]?.id, options: roles.map((entry) => ({ value: entry.id, label: entry.name })) });
     const password = textInput({ type: "password", placeholder: "Leave blank to keep the temporary password" });
     const pin = textInput({ value: "", placeholder: "4-digit terminal PIN", maxlength: 12 });
@@ -1482,7 +1497,11 @@ SECTION_RENDERERS.users = async (host) => {
         field({ label: "Full name", control: fullName, required: true }),
         field({ label: "Email", control: email, required: !isEdit,
           hint: "One account per email - we check before saving." }),
-        field({ label: "Phone", control: phone }),
+        formGrid([
+          field({ label: "Phone", control: phone }),
+          field({ label: "WhatsApp", control: whatsapp, required: !isEdit,
+            hint: "Used for the 6pm executive summary." }),
+        ]),
         formGrid([field({ label: "Role", control: role }), field({ label: "Status", control: status })]),
         isEdit
           ? field({ label: "Password", control: password, hint: "Leave blank to keep theirs. Anything you set here must be changed at their next sign-in." })
@@ -1493,6 +1512,7 @@ SECTION_RENDERERS.users = async (host) => {
           full_name: fullName.value.trim(),
           email: email.value.trim(),
           phone: phone.value.trim(),
+          whatsapp: whatsapp.value.trim(),
           role_id: Number(role.value),
           status: status.value,
         };
@@ -1537,10 +1557,12 @@ SECTION_RENDERERS.users = async (host) => {
 /* ------------------------------------------------------------------------- */
 SECTION_RENDERERS.reports = async (host) => {
   const listHost = h("div");
+  let teammates = [];
 
   async function load() {
     clear(listHost);
     const data = await get("/company/report-recipients");
+    teammates = data.teammates || [];
     const wa = data.whatsapp || {};
     const connection = h("div", { class: "flex items-center gap-2 wrap" },
       badge(wa.configured ? "WhatsApp connected" : "WhatsApp not connected", wa.configured ? "success" : "warning"),
@@ -1569,7 +1591,7 @@ SECTION_RENDERERS.reports = async (host) => {
       empty: {
         icon: "whatsapp",
         title: "No report recipients yet",
-        text: "Add the owners or managers who should receive the 6pm executive summary.",
+        text: "Add a teammate with a WhatsApp number, then pick them here to receive the 6pm summary.",
       },
       columns: [
         {
@@ -1630,48 +1652,74 @@ SECTION_RENDERERS.reports = async (host) => {
 
   function openForm(row) {
     const isEdit = Boolean(row);
-    const name = textInput({ value: row?.name || "", placeholder: "Full name" });
-    const number = textInput({
-      value: row?.whatsapp_number || "",
-      placeholder: "+263 77 123 4567",
-      attrs: { inputmode: "tel", autocomplete: "tel" },
-    });
-    const roleLabel = textInput({ value: row?.role_label || "", placeholder: "Owner, manager, accountant…" });
-    const email = textInput({ type: "email", value: row?.email || "", placeholder: "name@company.com" });
     const status = select({
       value: row && row.is_active === false ? "paused" : "active",
       options: [{ value: "active", label: "Receiving reports" }, { value: "paused", label: "Paused" }],
     });
+    const roleLabel = textInput({ value: row?.role_label || "", placeholder: "Owner, manager, accountant\u2026" });
     const errorHost = h("div");
+
+    if (isEdit) {
+      const instance = modal({
+        title: `Reports for ${row.name}`,
+        subtitle: "The name and number come from their teammate record",
+        size: "sm",
+        body: h("div", { class: "col gap-3" }, errorHost,
+          alertBox("Edit the teammate to change their WhatsApp number \u2014 reports always follow the team record.", "info"),
+          formGrid([
+            field({ label: "Role / label", control: roleLabel }),
+            field({ label: "Status", control: status }),
+          ])),
+        footer: [button("Cancel", { onClick: () => instance.close() }), button("Save changes", {
+          variant: "primary",
+          onClick: async () => {
+            try {
+              await patch(`/company/report-recipients/${row.id}`, {
+                role_label: roleLabel.value.trim(),
+                is_active: status.value === "active",
+              });
+              toast("Recipient updated.", "success");
+              instance.close();
+              load();
+            } catch (error) {
+              clear(errorHost);
+              errorHost.appendChild(alertBox(error.message, "danger"));
+            }
+          },
+        })],
+      });
+      return;
+    }
+
+    const picker = select({
+      value: "",
+      options: [{ value: "", label: "Choose a teammate\u2026" },
+        ...(teammates || []).map((mate) => ({ value: mate.id, label: `${mate.name} \u00b7 ${mate.whatsapp}` }))],
+    });
     const instance = modal({
-      title: isEdit ? `Edit ${row.name}` : "Add a report recipient",
-      subtitle: "No login needed — this person only receives the WhatsApp summary.",
+      title: "Add a report recipient",
+      subtitle: "Only teammates can receive reports \u2014 their WhatsApp number is already on file",
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
-        field({ label: "Full name", control: name, required: true }),
-        field({
-          label: "WhatsApp number", control: number, required: true,
-          hint: "Include the country code, e.g. +263 77 123 4567.",
-        }),
-        formGrid([
-          field({ label: "Role / label", control: roleLabel }),
-          field({ label: "Status", control: status }),
-        ]),
-        field({ label: "Email (optional)", control: email, hint: "Kept for your records; delivery is by WhatsApp." })),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button(isEdit ? "Save changes" : "Add recipient", {
-        variant: "primary",
+        teammates && teammates.length
+          ? null
+          : alertBox("Every teammate with a WhatsApp number is already receiving reports. Add a teammate first, with their WhatsApp number.", "warning"),
+        field({ label: "Teammate", control: picker, required: true }),
+        field({ label: "Role / label (optional)", control: roleLabel, hint: "Defaults to their workspace role." })),
+      footer: [button("Cancel", { onClick: () => instance.close() }), button("Add recipient", {
+        variant: "primary", icon: "plus", disabled: !(teammates || []).length,
         onClick: async () => {
-          const payload = {
-            name: name.value.trim(),
-            whatsapp_number: number.value.trim(),
-            role_label: roleLabel.value.trim(),
-            email: email.value.trim(),
-            is_active: status.value === "active",
-          };
+          if (!picker.value) {
+            errorHost.appendChild(alertBox("Choose the teammate who should receive the 6pm summary.", "danger"));
+            return;
+          }
           try {
-            if (isEdit) await patch(`/company/report-recipients/${row.id}`, payload);
-            else await post("/company/report-recipients", payload);
-            toast(isEdit ? "Recipient updated." : "Recipient added.", "success");
+            await post("/company/report-recipients", {
+              user_id: Number(picker.value),
+              role_label: roleLabel.value.trim(),
+              is_active: true,
+            });
+            toast("Recipient added.", "success");
             instance.close();
             load();
           } catch (error) {
@@ -1681,7 +1729,6 @@ SECTION_RENDERERS.reports = async (host) => {
         },
       })],
     });
-    name.focus();
   }
 
   async function preview() {

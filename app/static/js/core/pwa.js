@@ -1,7 +1,7 @@
 /* PWA glue: service-worker registration, install prompt and display mode. */
 
 import { h } from "./dom.js";
-import { button, modal } from "./ui.js";
+import { button, modal, toast } from "./ui.js";
 
 let deferredPrompt = window.__posInstallPrompt || null;
 
@@ -40,59 +40,46 @@ function isAndroid() {
   return /android/i.test(window.navigator.userAgent || "");
 }
 
-function installSteps() {
-  if (isIos()) {
-    return ["Tap the Share button in Safari's toolbar.", "Choose Add to Home Screen, then tap Add."];
-  }
-  if (isAndroid()) {
-    return ["Open the browser menu (⋮).", "Choose Install app or Add to Home screen."];
-  }
-  return [
-    "Click the install icon at the right end of the address bar.",
-    "Or open the browser menu and choose Install Universal POS.",
-  ];
-}
-
-/** True when the browser has offered its native one-click install flow. */
+/**
+ * True when a one-click install is genuinely possible: the browser handed us its
+ * install prompt, or we are on iOS where the share sheet is the only route.
+ */
 export function canInstall() {
-  return !isStandalone() && Boolean(deferredPrompt || window.__posInstallPrompt);
+  if (isStandalone()) return false;
+  if (deferredPrompt || window.__posInstallPrompt) return true;
+  return isIos();
 }
 
-function showInstallHelp() {
-  const installed = isStandalone();
+function showIosInstallHelp() {
   let instance = null;
-  const steps = installed ? [] : installSteps();
-  const copy = installed
-    ? "This window is already the installed app — launch it from your home screen, app list or desktop."
-    : "Installing adds Universal POS to your device with its own icon, a full-screen window and a home for the offline shell.";
   instance = modal({
-    title: "Install Universal POS",
-    subtitle: installed ? "Already installed" : "Full screen, offline-ready, one click away",
+    title: "Add to Home Screen",
+    subtitle: "iPhone and iPad install through Safari's share sheet",
     icon: "download",
     size: "sm",
     body: h("div", { class: "col gap-3" },
-      h("p", { class: "muted small" }, copy),
-      installed ? null : h("div", { class: "install-note" },
-        isIos()
-          ? "Safari controls app installation on iPhone and iPad."
-          : "Your browser controls the install prompt — it appears here as soon as the app is ready."),
-      installed ? null : h("ol", { class: "install-steps" }, steps.map((step) => h("li", {}, step))),
-      installed ? null : h("p", { class: "tiny dim" },
-        "Reload this page once if the install button has not appeared yet.")),
+      h("div", { class: "install-single" },
+        icon("share"),
+        h("span", {}, "Tap ", h("strong", {}, "Share"), ", then ", h("strong", {}, "Add to Home Screen"), ".")),
+      h("p", { class: "tiny dim" }, "It opens full screen with its own icon, like any other app.")),
     footer: [button("Got it", { variant: "primary", onClick: () => instance.close() })],
   });
 }
 
-/** Prompt the browser's install flow, or explain how to install by hand. */
+/** One click when the browser allows it; the share-sheet line on iOS. */
 export async function installApp() {
   if (isStandalone()) {
-    showInstallHelp();
+    toast("Universal POS is already installed on this device.", "info");
     return { outcome: "installed" };
   }
   const prompt = deferredPrompt || window.__posInstallPrompt;
   if (!prompt) {
-    showInstallHelp();
-    return { outcome: "help" };
+    if (isIos()) {
+      showIosInstallHelp();
+      return { outcome: "help" };
+    }
+    toast("This browser has not offered the install yet. Try again in a moment.", "info");
+    return { outcome: "unavailable" };
   }
   deferredPrompt = null;
   window.__posInstallPrompt = null;
@@ -101,8 +88,8 @@ export async function installApp() {
     const choice = await prompt.userChoice;
     return { outcome: choice?.outcome || "dismissed" };
   } catch {
-    showInstallHelp();
-    return { outcome: "help" };
+    toast("This browser has not offered the install yet. Try again in a moment.", "info");
+    return { outcome: "unavailable" };
   }
 }
 

@@ -24,13 +24,6 @@ from app.utils import validate
 bp = Blueprint("report_delivery", __name__, url_prefix="/api/company")
 
 
-def _normalise_or_error(raw, field: str = "whatsapp_number") -> str:
-    try:
-        return whatsapp.normalise_number(raw)
-    except ValueError as error:
-        raise bad_request(str(error), {field: str(error)}) from error
-
-
 def _duplicate(company_id: int, number: str, exclude_id: int | None = None) -> bool:
     query = ReportRecipient.query.filter_by(company_id=company_id, whatsapp_number=number)
     if exclude_id:
@@ -42,15 +35,25 @@ def _payload():
     payload = validate(
         request.get_json(silent=True) or {},
         {
-            "name": {"type": "str", "required": True, "min_len": 2, "max_len": 120, "label": "Name"},
-            "whatsapp_number": {"type": "str", "required": True, "max_len": 40, "label": "WhatsApp number"},
-            "email": {"type": "str", "default": "", "max_len": 180},
+            "user_id": {"type": "int", "required": True, "label": "Teammate"},
             "role_label": {"type": "str", "default": "", "max_len": 80},
             "is_active": {"type": "bool", "default": True},
         },
     )
-    payload["whatsapp_number"] = _normalise_or_error(payload["whatsapp_number"])
     return payload
+
+
+def _teammate(company, user_id: int):
+    """Recipients are teammates: their WhatsApp number lives on the team record."""
+    from app.models import User
+
+    user = get_scoped(User, user_id, company.id)
+    if not user.whatsapp:
+        raise bad_request(
+            f"{user.full_name} has no WhatsApp number yet. Add it in Team first.",
+            {"user_id": "Add their WhatsApp number under Team."},
+        )
+    return user
 
 
 @bp.get("/report-recipients")
@@ -65,9 +68,19 @@ def list_report_recipients():
         .all()
     )
     dispatch = latest_dispatch(company)
+    from app.models import User
+
+    linked = {row.user_id for row in rows if row.user_id}
+    teammates = [
+        {"id": user.id, "name": user.full_name, "whatsapp": user.whatsapp,
+         "role": user.role.name if user.role else ""}
+        for user in User.query.filter_by(company_id=company.id).order_by(User.full_name).all()
+        if user.whatsapp and user.id not in linked and not user.is_developer
+    ]
     return jsonify(
         {
             "items": [row.to_dict() for row in rows],
+            "teammates": teammates,
             "whatsapp": whatsapp.config_status(),
             "daily_hour": daily_hour(),
             "last_dispatch": dispatch.to_dict() if dispatch else None,
@@ -82,12 +95,27 @@ def list_report_recipients():
 def create_report_recipient():
     company = current_company()
     payload = _payload()
-    if _duplicate(company.id, payload["whatsapp_number"]):
+    user = _teammate(company, payload["user_id"])
+    existing = ReportRecipient.query.filter_by(company_id=company.id, user_id=user.id).first()
+    if existing is not None:
+        raise bad_request(
+            f"{user.full_name} already receives reports.",
+            {"user_id": "Already a recipient."},
+        )
+    if _duplicate(company.id, user.whatsapp):
         raise bad_request(
             "That WhatsApp number already receives reports.",
-            {"whatsapp_number": "Already subscribed."},
+            {"user_id": "That number is already subscribed."},
         )
-    row = ReportRecipient(company_id=company.id, **payload)
+    row = ReportRecipient(
+        company_id=company.id,
+        user_id=user.id,
+        name=user.full_name,
+        whatsapp_number=user.whatsapp,
+        email=user.email or "",
+        role_label=payload.get("role_label") or (user.role.name if user.role else ""),
+        is_active=payload.get("is_active", True),
+    )
     db.session.add(row)
     db.session.commit()
     audit("report_recipient.created", entity="report_recipient", entity_id=row.id,
@@ -105,20 +133,10 @@ def update_report_recipient(recipient_id: int):
     payload = validate(
         request.get_json(silent=True) or {},
         {
-            "name": {"type": "str", "min_len": 2, "max_len": 120},
-            "whatsapp_number": {"type": "str", "max_len": 40},
-            "email": {"type": "str", "max_len": 180},
             "role_label": {"type": "str", "max_len": 80},
             "is_active": {"type": "bool"},
         },
     )
-    if "whatsapp_number" in payload:
-        payload["whatsapp_number"] = _normalise_or_error(payload["whatsapp_number"])
-        if _duplicate(company.id, payload["whatsapp_number"], exclude_id=row.id):
-            raise bad_request(
-                "That WhatsApp number already receives reports.",
-                {"whatsapp_number": "Already subscribed."},
-            )
     for key, value in payload.items():
         setattr(row, key, value)
     db.session.commit()
