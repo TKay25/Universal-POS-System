@@ -6,7 +6,7 @@ frontend from its column schema, which also makes CSV export automatic.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import func, select
 
@@ -19,12 +19,14 @@ from app.models import (
     Location,
     Product,
     Refund,
+    Register,
     Sale,
     SaleItem,
     SalePayment,
     Shift,
     StockMovement,
     Supplier,
+    User,
 )
 from app.utils import csv_response, day_buckets, iso, utcnow
 from app.services.timezones import local_date_sql, local_hour_sql, local_day_bounds, to_local
@@ -47,6 +49,7 @@ def _scalar(stmt, default=0):
 
 
 def overview(company, start: datetime, end: datetime, location_id: int | None = None, *,
+             user_id: int | None = None,
              include_breakdowns: bool = True, include_payments: bool = True,
              include_lists: bool = True, include_branches: bool = True,
              include_departments: bool = True) -> dict:
@@ -57,7 +60,11 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
     """
     company_id = company.id
     statuses = REVENUE_STATUSES
+    # ``branch_clause`` carries the branch *and* cashier filters; every query in
+    # this function spreads it so both narrow the whole report consistently.
     branch_clause = [Sale.location_id == location_id] if location_id else []
+    if user_id:
+        branch_clause.append(Sale.user_id == user_id)
 
     totals = db.session.execute(
         select(
@@ -156,10 +163,12 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         ]
 
     top_products: list[dict] = []
+    least_products: list[dict] = []
     category_mix: list[dict] = []
     hourly: list[dict] = []
     if include_breakdowns:
         top_products = _top_products(company_id, start, end, statuses, branch_clause)
+        least_products = _least_products(company_id, start, end, statuses, branch_clause)
         category_mix = _category_mix(company_id, start, end, statuses, branch_clause)
         hourly = _hourly_mix(company, company_id, start, end, statuses, branch_clause)
 
@@ -222,6 +231,10 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
     if include_departments:
         department_mix = _department_mix(company_id, start, end, statuses, branch_clause)
 
+    team = []
+    if include_breakdowns:
+        team = _team_breakdown(company_id, start, end, statuses, branch_clause)
+
     return {
         "range": {"from": iso(start), "to": iso(end)},
         "branches": [
@@ -249,12 +262,56 @@ def overview(company, start: datetime, end: datetime, location_id: int | None = 
         "series": series,
         "payment_mix": payment_mix,
         "top_products": top_products,
+        "least_products": least_products,
         "category_mix": category_mix,
         "department_mix": department_mix,
         "hourly": hourly,
+        "team": team,
         "recent_sales": [s.to_dict() for s in recent],
         "low_stock": [p.to_dict() for p in low_stock],
     }
+
+
+def _team_breakdown(company_id, start, end, statuses, branch_clause) -> list[dict]:
+    """Sales and profit for every person who took money in the period."""
+    rows = db.session.execute(
+        select(
+            func.coalesce(Sale.user_id, 0),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+            func.coalesce(func.sum(Sale.discount_cents), 0),
+            func.coalesce(func.sum(Sale.refunded_cents), 0),
+        )
+        .where(
+            Sale.company_id == company_id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            Sale.status.in_(statuses),
+            *branch_clause,
+        )
+        .group_by(Sale.user_id)
+        .order_by(func.sum(Sale.total_cents).desc())
+    ).all()
+    names = {user.id: user.full_name for user in User.query.filter_by(company_id=company_id).all()}
+    total = sum(int(row[1] or 0) for row in rows) or 1
+    team = []
+    for row in rows:
+        sales = int(row[1] or 0)
+        cost = int(row[3] or 0)
+        transactions = int(row[2] or 0)
+        team.append({
+            "user_id": int(row[0] or 0),
+            "name": names.get(int(row[0] or 0), "Deleted user"),
+            "sales_cents": sales,
+            "profit_cents": sales - cost,
+            "transactions": transactions,
+            "average_ticket_cents": int(round(sales / transactions)) if transactions else 0,
+            "discount_cents": int(row[4] or 0),
+            "refunded_cents": int(row[5] or 0),
+            "share_percent": round(sales / total * 100, 1),
+        })
+    return team
 
 
 def _top_products(company_id, start, end, statuses, branch_clause) -> list[dict]:
@@ -275,6 +332,29 @@ def _top_products(company_id, start, end, statuses, branch_clause) -> list[dict]
         .group_by(SaleItem.name)
         .order_by(func.sum(SaleItem.qty).desc())
         .limit(8)
+    ).all()
+    return [{"name": row[0], "qty": round(float(row[1]), 3), "revenue_cents": int(row[2])} for row in rows]
+
+
+def _least_products(company_id, start, end, statuses, branch_clause, limit=5) -> list[dict]:
+    rows = db.session.execute(
+        select(
+            SaleItem.name,
+            func.coalesce(func.sum(SaleItem.qty), 0),
+            func.coalesce(func.sum(SaleItem.line_total_cents), 0),
+        )
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .where(
+            Sale.company_id == company_id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            Sale.status.in_(statuses),
+            *branch_clause,
+        )
+        .group_by(SaleItem.name)
+        .having(func.sum(SaleItem.qty) > 0)
+        .order_by(func.sum(SaleItem.line_total_cents).asc())
+        .limit(limit)
     ).all()
     return [{"name": row[0], "qty": round(float(row[1]), 3), "revenue_cents": int(row[2])} for row in rows]
 
@@ -366,9 +446,9 @@ def _hourly_mix(company, company_id, start, end, statuses, branch_clause) -> lis
     ]
 
 
-def today_dashboard(company) -> dict:
+def today_dashboard(company, location_id: int | None = None) -> dict:
     start, end = local_day_bounds(company)
-    return overview(company, start, end)
+    return overview(company, start, end, location_id=location_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -535,7 +615,187 @@ def _rows(stmt):
     return [list(row) for row in db.session.execute(stmt).all()]
 
 
-def report_sales(company, start, end):
+def _branch_filter(location_id, column=None):
+    if not location_id:
+        return []
+    return [(column or Sale.location_id) == location_id]
+
+
+def _user_filter(user_id):
+    return [Sale.user_id == user_id] if user_id else []
+
+
+def _comparison_unit(days: int) -> tuple[str, str]:
+    if days <= 1:
+        return "day", "day"
+    if days <= 7:
+        return "week", "week"
+    if days <= 31:
+        return "month", "month"
+    if days <= 92:
+        return "quarter", "quarter"
+    return "year", "year"
+
+
+def _bucket_key(day: date, unit: str):
+    if unit == "day":
+        return day
+    if unit == "week":
+        return day - timedelta(days=day.weekday())
+    if unit == "month":
+        return day.replace(day=1)
+    if unit == "quarter":
+        return day.year, (day.month - 1) // 3 + 1
+    return (day.year,)
+
+
+def _bucket_label(key, unit: str) -> str:
+    if unit == "day":
+        return key.strftime("%a %d %b %Y")
+    if unit == "week":
+        end = key + timedelta(days=6)
+        return f"{key.strftime('%d %b')} – {end.strftime('%d %b %Y')}"
+    if unit == "month":
+        return key.strftime("%B %Y")
+    if unit == "quarter":
+        year, quarter = key
+        return f"Q{quarter} {year}"
+    return str(key[0])
+
+
+def period_comparison(company, start: datetime, end: datetime,
+                      location_id: int | None = None, user_id: int | None = None) -> dict:
+    """Compare the selected period with history and the previous period.
+
+    One grouped query produces the daily history; the comparison buckets are
+    built in Python so day, week, month, quarter and year work identically on
+    SQLite and Postgres.
+    """
+    scope = [
+        Sale.company_id == company.id,
+        Sale.status.in_(REVENUE_STATUSES),
+        Sale.created_at <= end,
+        *_branch_filter(location_id),
+        *_user_filter(user_id),
+    ]
+    history_start = start - timedelta(days=365 * 5)
+    rows = db.session.execute(
+        select(
+            local_date_sql(Sale.created_at, company).label("day"),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+        )
+        .where(*scope, Sale.created_at >= history_start)
+        .group_by("day")
+        .order_by("day")
+    ).all()
+
+    daily: dict[date, dict] = {}
+    for row in rows:
+        try:
+            day = date.fromisoformat(str(row[0])[:10])
+        except ValueError:
+            continue
+        revenue = int(row[1] or 0)
+        cost = int(row[3] or 0)
+        entry = daily.setdefault(day, {"revenue_cents": 0, "cost_cents": 0, "transactions": 0})
+        entry["revenue_cents"] += revenue
+        entry["cost_cents"] += cost
+        entry["transactions"] += int(row[2] or 0)
+
+    period_from = to_local(start, company).date()
+    period_to = to_local(end, company).date()
+    days = max(1, (period_to - period_from).days + 1)
+
+    def totals(first: date, last: date) -> dict:
+        revenue = profit = transactions = 0
+        cursor = first
+        while cursor <= last:
+            entry = daily.get(cursor)
+            if entry:
+                revenue += entry["revenue_cents"]
+                profit += entry["revenue_cents"] - entry["cost_cents"]
+                transactions += entry["transactions"]
+            cursor += timedelta(days=1)
+        return {
+            "revenue_cents": revenue,
+            "profit_cents": profit,
+            "transactions": transactions,
+        }
+
+    current = totals(period_from, period_to)
+    previous_end_day = period_from - timedelta(days=1)
+    previous_start_day = previous_end_day - timedelta(days=days - 1)
+    previous = totals(previous_start_day, previous_end_day)
+    previous["from"] = previous_start_day.isoformat()
+    previous["to"] = previous_end_day.isoformat()
+
+    unit, unit_label = _comparison_unit(days)
+    current_key = _bucket_key(period_to, unit)
+    buckets: dict[object, dict] = {}
+    for day, entry in daily.items():
+        key = _bucket_key(day, unit)
+        bucket = buckets.setdefault(
+            key, {"revenue_cents": 0, "profit_cents": 0, "transactions": 0}
+        )
+        bucket["revenue_cents"] += entry["revenue_cents"]
+        bucket["profit_cents"] += entry["revenue_cents"] - entry["cost_cents"]
+        bucket["transactions"] += entry["transactions"]
+
+    history = [
+        {"key": key, **value}
+        for key, value in buckets.items()
+        if key != current_key and value["transactions"] > 0
+    ]
+    best = max(history, key=lambda row: row["revenue_cents"], default=None)
+    worst = min(history, key=lambda row: row["revenue_cents"], default=None)
+
+    def benchmark(row):
+        if row is None:
+            return None
+        result = {
+            "label": _bucket_label(row["key"], unit),
+            "revenue_cents": row["revenue_cents"],
+            "profit_cents": row["profit_cents"],
+            "transactions": row["transactions"],
+        }
+        if row["revenue_cents"]:
+            result["vs_current_percent"] = round(
+                (current["revenue_cents"] - row["revenue_cents"]) / row["revenue_cents"] * 100, 1
+            )
+        else:
+            result["vs_current_percent"] = None
+        return result
+
+    change = None
+    if previous["revenue_cents"]:
+        change = round(
+            (current["revenue_cents"] - previous["revenue_cents"])
+            / previous["revenue_cents"] * 100,
+            1,
+        )
+    previous.update({
+        "label": "Yesterday" if unit == "day" else f"Previous {unit_label}",
+        "change_percent": change,
+    })
+
+    return {
+        "range": {
+            "from": period_from.isoformat(),
+            "to": period_to.isoformat(),
+            "days": days,
+        },
+        "unit": unit,
+        "unit_label": unit_label,
+        "current": current,
+        "previous": previous,
+        "best": benchmark(best),
+        "worst": benchmark(worst),
+    }
+
+
+def report_sales(company, start, end, location_id=None, user_id=None):
     stmt = (
         select(
             Sale.number,
@@ -551,7 +811,13 @@ def report_sales(company, start, end):
         )
         .select_from(Sale)
         .outerjoin(Customer, Customer.id == Sale.customer_id)
-        .where(Sale.company_id == company.id, Sale.created_at >= start, Sale.created_at <= end)
+        .where(
+            Sale.company_id == company.id,
+            Sale.created_at >= start,
+            Sale.created_at <= end,
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
+        )
         .order_by(Sale.created_at.desc())
     )
     rows = _rows(stmt)
@@ -563,7 +829,7 @@ def report_sales(company, start, end):
     return rows
 
 
-def report_products(company, start, end):
+def report_products(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             SaleItem.name,
@@ -579,6 +845,8 @@ def report_products(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(SaleItem.name)
         .order_by(func.sum(SaleItem.line_total_cents).desc())
@@ -591,7 +859,7 @@ def report_products(company, start, end):
     return rows
 
 
-def report_categories(company, start, end):
+def report_categories(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             func.coalesce(Category.name, "Uncategorised"),
@@ -608,6 +876,8 @@ def report_categories(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(Category.name)
         .order_by(func.sum(SaleItem.line_total_cents).desc())
@@ -620,7 +890,7 @@ def report_categories(company, start, end):
     return rows
 
 
-def report_payments(company, start, end):
+def report_payments(company, start, end, location_id=None, user_id=None):
     return _rows(
         select(
             SalePayment.method_name,
@@ -634,13 +904,15 @@ def report_payments(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(SalePayment.method_name)
         .order_by(func.sum(SalePayment.amount_cents).desc())
     )
 
 
-def report_tax(company, start, end):
+def report_tax(company, start, end, location_id=None, user_id=None):
     return _rows(
         select(
             SaleItem.tax_rate_percent,
@@ -655,13 +927,15 @@ def report_tax(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(SaleItem.tax_rate_percent)
         .order_by(SaleItem.tax_rate_percent)
     )
 
 
-def report_cashiers(company, start, end):
+def report_cashiers(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             func.coalesce(Sale.user_id, 0),
@@ -676,6 +950,8 @@ def report_cashiers(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(Sale.user_id)
     )
@@ -688,7 +964,7 @@ def report_cashiers(company, start, end):
     return rows
 
 
-def report_inventory(company, start, end):
+def report_inventory(company, start, end, location_id=None, user_id=None):
     from app.services import fifo
 
     products = (
@@ -714,7 +990,7 @@ def report_inventory(company, start, end):
     return rows
 
 
-def report_low_stock(company, start, end):
+def report_low_stock(company, start, end, location_id=None, user_id=None):
     return [
         [
             item["name"],
@@ -729,7 +1005,7 @@ def report_low_stock(company, start, end):
     ]
 
 
-def report_stock_movements(company, start, end):
+def report_stock_movements(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             StockMovement.created_at,
@@ -753,7 +1029,7 @@ def report_stock_movements(company, start, end):
     return rows
 
 
-def report_customers(company, start, end):
+def report_customers(company, start, end, location_id=None, user_id=None):
     return _rows(
         select(
             Customer.name,
@@ -769,7 +1045,7 @@ def report_customers(company, start, end):
     )
 
 
-def report_refunds(company, start, end):
+def report_refunds(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             Sale.number,
@@ -780,7 +1056,9 @@ def report_refunds(company, start, end):
             Refund.restock,
         )
         .join(Sale, Sale.id == Refund.sale_id)
-        .where(Refund.company_id == company.id, Refund.created_at >= start, Refund.created_at <= end)
+        .where(Refund.company_id == company.id, Refund.created_at >= start, Refund.created_at <= end,
+               *_branch_filter(location_id),
+               *([Refund.user_id == user_id] if user_id else []))
         .order_by(Refund.created_at.desc())
     )
     for row in rows:
@@ -788,7 +1066,7 @@ def report_refunds(company, start, end):
     return rows
 
 
-def report_shifts(company, start, end):
+def report_shifts(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             func.coalesce(Shift.user_id, 0),
@@ -799,7 +1077,10 @@ def report_shifts(company, start, end):
             Shift.counted_cash_cents,
             Shift.variance_cents,
         )
-        .where(Shift.company_id == company.id, Shift.opened_at >= start, Shift.opened_at <= end)
+        .outerjoin(Register, Register.id == Shift.register_id)
+        .where(Shift.company_id == company.id, Shift.opened_at >= start, Shift.opened_at <= end,
+               *_branch_filter(location_id, Register.location_id),
+               *([Shift.user_id == user_id] if user_id else []))
         .order_by(Shift.opened_at.desc())
     )
     users = {u.id: u.full_name for u in company.users}
@@ -810,7 +1091,7 @@ def report_shifts(company, start, end):
     return rows
 
 
-def report_laybys(company, start, end):
+def report_laybys(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             Layby.number,
@@ -832,7 +1113,7 @@ def report_laybys(company, start, end):
     return rows
 
 
-def report_branches(company, start, end):
+def report_branches(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(
             func.coalesce(Location.name, "Unassigned"),
@@ -849,6 +1130,8 @@ def report_branches(company, start, end):
             Sale.created_at >= start,
             Sale.created_at <= end,
             Sale.status.in_(REVENUE_STATUSES),
+            *_branch_filter(location_id),
+            *_user_filter(user_id),
         )
         .group_by(Location.name)
         .order_by(func.sum(Sale.total_cents).desc())
@@ -860,7 +1143,7 @@ def report_branches(company, start, end):
     return rows
 
 
-def report_suppliers(company, start, end):
+def report_suppliers(company, start, end, location_id=None, user_id=None):
     rows = _rows(
         select(Supplier.name, Supplier.contact_name, Supplier.phone, Supplier.email)
         .where(Supplier.company_id == company.id)
@@ -1102,16 +1385,18 @@ def public_registry(company) -> list[dict]:
     return published
 
 
-def build_report(company, key: str, start: datetime, end: datetime):
+def build_report(company, key: str, start: datetime, end: datetime, location_id: int | None = None,
+                 user_id: int | None = None):
     definition = REPORT_REGISTRY.get(key)
     if definition is None:
         return None, None
-    rows = definition["build"](company, start, end)
+    rows = definition["build"](company, start, end, location_id=location_id, user_id=user_id)
     return definition, rows
 
 
-def report_csv(company, key: str, start: datetime, end: datetime):
-    definition, rows = build_report(company, key, start, end)
+def report_csv(company, key: str, start: datetime, end: datetime, location_id: int | None = None,
+               user_id: int | None = None):
+    definition, rows = build_report(company, key, start, end, location_id=location_id, user_id=user_id)
     if definition is None:
         return None
     headers = [column["label"] for column in definition["columns"]]

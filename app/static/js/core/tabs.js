@@ -103,8 +103,17 @@ class TabManager {
 
     const tab = { id, title, icon: iconName, el: view, inner: el, instance, path, pinned, button, label };
     this.tabs.push(tab);
+    this.syncBar();
     this.activate(id);
     return tab;
+  }
+
+  /* A lone tab adds a whole empty strip below the topbar: hide it. */
+  syncBar() {
+    if (!this.bar) return;
+    const single = this.tabs.length <= 1;
+    this.bar.classList.toggle("is-single", single);
+    this.bar.setAttribute("aria-hidden", single ? "true" : "false");
   }
 
   reorder(draggedId, targetId) {
@@ -151,6 +160,7 @@ class TabManager {
     tab.el.remove();
     tab.button.remove();
     this.tabs.splice(index, 1);
+    this.syncBar();
     if (this.activeId === id) {
       const next = this.tabs[index] || this.tabs[index - 1] || null;
       if (next) this.activate(next.id);

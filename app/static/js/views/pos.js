@@ -8,9 +8,10 @@ import {
   store, hasPerm, moduleOn, moduleConfig, settings, currentUser, currency, currentCompany,
 } from "../core/store.js";
 import { posPreference } from "../core/prefs.js";
+import { branchScope, setBranchScope } from "../core/branch.js";
 import {
   button, iconButton, modal, drawer, field, textInput, textarea, select, switchControl,
-  toast, badge, statusBadge, emptyState, alertBox, confirmDialog, tagInput, menu, moneyInput,
+  toast, badge, statusBadge, emptyState, alertBox, confirmDialog, tagInput, menu, moneyInput, searchLoader,
 } from "../core/ui.js";
 import { printReceipt } from "./saleDetail.js";
 
@@ -72,6 +73,15 @@ export default async function posView(ctx) {
   /* Data                                                                   */
   /* --------------------------------------------------------------------- */
   async function load() {
+    const scope = branchScope();
+    if (scope.all) {
+      state.allBranches = true;
+      state.locations = branchLocations();
+      loadingSkeleton.remove();
+      el.classList.remove("is-loading");
+      renderAllBranchesNotice();
+      return;
+    }
     const data = await get("/pos/bootstrap");
     const allowCredit = (data.config.customers || {}).allow_credit !== false;
     Object.assign(state, {
@@ -90,14 +100,43 @@ export default async function posView(ctx) {
       taxRates: data.taxes,
     });
     const savedBranch = Number(localStorage.getItem(`pos-branch:${currentCompany()?.slug || "default"}`)) || null;
-    state.locationId = state.locations.some((row) => row.id === savedBranch)
-      ? savedBranch
-      : (state.locations.find((row) => row.is_default)?.id || state.locations[0]?.id || null);
+    state.allBranches = false;
+    state.locationId = scope.locationId
+      || (state.locations.some((row) => row.id === savedBranch)
+        ? savedBranch
+        : (state.locations.find((row) => row.is_default)?.id || state.locations[0]?.id || null));
     loadingSkeleton.remove();
     el.classList.remove("is-loading");
     renderAll();
+    window.dispatchEvent(new CustomEvent("pos:ready"));
     const search = el.querySelector("[data-pos-search]");
     if (search) search.focus();
+  }
+
+  function renderAllBranchesNotice() {
+    clear(el);
+    const branches = state.locations;
+    el.appendChild(h("div", { class: "pos-readonly" },
+      h("div", { class: "pos-readonly__card" },
+        h("div", { class: "module-card__icon" }, icon("layers")),
+        h("h2", { class: "pos-readonly__title" }, "All branches is a reporting view"),
+        h("p", { class: "pos-readonly__text" },
+          "Sales, stock and reports are combined across every shop, but a sale must belong to one branch. Choose a branch to open the till."),
+        h("div", { class: "pos-readonly__branches" },
+          branches.map((branch) => h("button", {
+            class: "pos-readonly__branch",
+            type: "button",
+            onClick: () => {
+              setBranchScope(branch.id);
+              window.location.reload();
+            },
+          }, icon("map"),
+          h("span", { class: "grow" },
+            h("span", { class: "strong" }, branch.name),
+            h("span", { class: "tiny dim" }, branch.code || branch.address || "Shop branch")),
+          icon("chevronRight")))),
+        h("div", { class: "flex justify-end mt-2" },
+          button("Open reports", { icon: "chart", onClick: () => { window.location.hash = "#/reports"; } })))));
   }
 
   /* --------------------------------------------------------------------- */
@@ -301,7 +340,7 @@ export default async function posView(ctx) {
       ? (state.locations.find((row) => row.id === state.locationId)?.name || "Branch")
       : (state.locations[0]?.name || "");
     const heldOrders = Boolean(state.modules.holders);
-    const searchInput = h("input", {
+    const searchInput = searchLoader(h("input", {
       class: "input",
       placeholder: "Search products or scan a barcode…",
       value: state.search,
@@ -324,7 +363,7 @@ export default async function posView(ctx) {
           renderGrid();
         }
       },
-    });
+    }));
 
     left.appendChild(h("div", { class: "pos__toolbar" },
       h("div", { class: "pos__search" }, icon("search"), searchInput),
@@ -335,8 +374,14 @@ export default async function posView(ctx) {
         onClick: (e) => openBranchMenu(e.currentTarget),
       }, icon("map"), h("span", {}, branchLabel)) : null,
       h("div", { class: "flex gap-2" },
-        heldOrders && state.holds.length
-          ? button(`Held (${state.holds.length})`, { size: "sm", icon: "pause", onClick: openHolds })
+        heldOrders
+          ? button(state.holds.length ? `Held (${state.holds.length})` : "Held orders", {
+            size: "sm",
+            icon: "pause",
+            variant: state.holds.length ? "" : "ghost",
+            title: "Parked carts you can finish later",
+            onClick: openHolds,
+          })
           : null,
         state.modules.shifts
           ? h("button", {
@@ -434,11 +479,15 @@ export default async function posView(ctx) {
       return;
     }
     for (const product of items) {
-      const out = product.track_stock && product.stock_qty <= 0 && !((state.config.inventory || {}).allow_negative);
+      const allowNegative = Boolean((state.config.inventory || {}).allow_negative);
+      const tracked = Boolean(product.track_stock);
+      const out = tracked && product.stock_qty <= 0 && !allowNegative;
+      const low = tracked && !out && product.stock_qty <= (product.low_stock_threshold ?? 0);
+      const stockState = out ? "is-out" : low ? "is-low" : tracked ? "is-in" : "";
       const tile = h("button", {
-        class: `pos-tile${out ? " is-out" : ""}`,
+        class: `pos-tile${stockState ? ` ${stockState}` : ""}`,
         type: "button",
-        title: `${product.name} · ${money(product.price_cents)}`,
+        title: `${product.name} · ${money(product.price_cents)}${tracked ? ` · ${fmtQty(product.stock_qty)} in stock` : ""}`,
         style: { "--tile-color": product.category_color || product.color || "var(--primary)" },
         onClick: () => addProduct(product),
       });
@@ -449,9 +498,11 @@ export default async function posView(ctx) {
       if (product.is_featured) {
         name.appendChild(h("span", { class: "pos-tile__badge", title: "Featured" }, icon("star")));
       }
-      const stock = cfg.show_stock !== false && product.track_stock
-        ? h("span", { class: "pos-tile__stock", title: out ? "Out of stock" : `${fmtQty(product.stock_qty)} in stock` },
-          out ? "Out" : `${fmtQty(product.stock_qty)} left`)
+      const stock = cfg.show_stock !== false && tracked
+        ? h("span", {
+          class: "pos-tile__stock",
+          title: out ? "Out of stock" : low ? `Low stock · ${fmtQty(product.low_stock_threshold)} is the reorder point` : `${fmtQty(product.stock_qty)} in stock`,
+        }, out ? "Out of stock" : low ? `${fmtQty(product.stock_qty)} left · low` : `${fmtQty(product.stock_qty)} left`)
         : null;
       tile.appendChild(name);
       tile.appendChild(h("span", { class: "pos-tile__meta" },
@@ -471,7 +522,7 @@ export default async function posView(ctx) {
       h("div", { class: "grow" },
         h("div", { class: "strong" }, "Current sale"),
         h("div", { class: "tiny dim" }, `${number(totals.itemCount, 0)} item${totals.itemCount === 1 ? "" : "s"} · ${currentUser().full_name}`)),
-      state.holds.length ? iconButton("pause", { title: "Held orders", onClick: openHolds }) : null,
+      state.holds.length ? iconButton("pause", { title: `Held orders (${state.holds.length})`, onClick: openHolds }) : null,
       iconButton("trash", { title: "Clear cart", onClick: async () => {
         if (!state.cart.length) return;
         if (await confirmDialog({ title: "Clear this sale?", message: "All items will be removed from the cart.", confirmLabel: "Clear", danger: true })) clearCart();
@@ -506,7 +557,17 @@ export default async function posView(ctx) {
       items.appendChild(h("div", { class: "cart__empty" },
         icon("cart"),
         h("div", { class: "strong" }, "Cart is empty"),
-        h("div", { class: "small" }, "Tap a product or scan a barcode to begin.")));
+        h("div", { class: "small" }, "Tap a product or scan a barcode to begin."),
+        state.modules.holders
+          ? h("button", {
+            class: "btn btn--sm btn--ghost mt-2",
+            type: "button",
+            onClick: openHolds,
+          }, icon("pause"),
+          h("span", {}, state.holds.length
+            ? `Finish a parked order (${state.holds.length})`
+            : "Held orders live here"))
+          : null));
     } else {
       state.cart.forEach((line) => {
         const lineTotal = Math.round(line.unitPrice * line.qty) - (line.discount || 0);
@@ -605,7 +666,7 @@ export default async function posView(ctx) {
   /* --------------------------------------------------------------------- */
   function openCustomerPicker() {
     const results = h("div", { class: "col gap-1" });
-    const input = textInput({ placeholder: "Search by name, phone or email…", autofocus: true });
+    const input = searchLoader(textInput({ placeholder: "Search by name, phone or email…", autofocus: true }));
     const body = h("div", { class: "col gap-3" }, input, results);
     const errorHost = h("div");
 
@@ -928,25 +989,63 @@ export default async function posView(ctx) {
 
   function openHolds() {
     const body = h("div", { class: "col gap-2" });
-    if (!state.holds.length) body.appendChild(emptyState({ icon: "pause", title: "No held orders", text: "Park a cart to free the till for the next customer." }));
+    if (!state.holds.length) {
+      body.appendChild(emptyState({
+        icon: "pause",
+        title: "No held orders",
+        text: "Press Hold while a cart is open to park it here. Resumed carts keep their items, discounts and notes.",
+      }));
+    } else {
+      body.appendChild(h("div", { class: "small muted" },
+        `${state.holds.length} parked cart${state.holds.length === 1 ? "" : "s"} · resume one to finish and charge it`));
+    }
     for (const hold of state.holds) {
+      const payload = hold.payload || {};
+      const lines = Array.isArray(payload.cart) ? payload.cart : [];
+      const total = lines.reduce((sum, line) => sum + (line.unit_price_cents ?? 0) * (line.qty || 1), 0);
+      const summary = lines
+        .slice(0, 3)
+        .map((line) => {
+          const product = state.products.find((entry) => entry.id === line.product_id);
+          return `${product?.name || "Item"} ×${fmtQty(line.qty || 1)}`;
+        })
+        .join(", ");
       body.appendChild(h("div", { class: "card card--pad" },
         h("div", { class: "flex items-center gap-2" },
-          h("div", { class: "grow" },
-            h("div", { class: "strong" }, hold.name),
-            h("div", { class: "tiny dim" }, `${hold.user} · ${date(hold.created_at)}`)),
-          button("Resume", { size: "sm", variant: "primary", onClick: () => resume(hold) }),
-          iconButton("trash", { size: "sm", variant: "ghost", danger: true, onClick: async () => {
-            await del(`/holds/${hold.id}`);
-            state.holds = state.holds.filter((entry) => entry.id !== hold.id);
-            instance.close();
-            openHolds();
-          } }))));
+          h("div", { class: "grow", style: { minWidth: 0 } },
+            h("div", { class: "strong truncate" }, hold.name),
+            h("div", { class: "tiny dim" }, `${hold.user} · ${date(hold.created_at)} · ${lines.length} line${lines.length === 1 ? "" : "s"}`)),
+          h("div", { class: "num strong" }, money(total))),
+        summary
+          ? h("div", { class: "small muted mt-1", style: { overflowWrap: "anywhere" } },
+            summary + (lines.length > 3 ? ` +${lines.length - 3} more` : ""))
+          : null,
+        h("div", { class: "flex gap-2 mt-2" },
+          button("Resume & charge", {
+            size: "sm",
+            variant: "primary",
+            icon: "cart",
+            onClick: () => { resume(hold, { charge: true }); },
+          }),
+          button("Discard", {
+            size: "sm",
+            variant: "ghost",
+            onClick: async () => {
+              await del(`/holds/${hold.id}`);
+              state.holds = state.holds.filter((entry) => entry.id !== hold.id);
+              instance.close();
+              openHolds();
+            },
+          }))));
     }
-    const instance = drawer({ title: "Held orders", subtitle: "Resume or discard parked carts", body });
+    const instance = drawer({
+      title: "Held orders",
+      subtitle: "Parked carts wait here until you finish them",
+      body,
+    });
   }
 
-  function resume(hold) {
+  function resume(hold, { charge = false } = {}) {
     const payload = hold.payload || {};
     const cart = [];
     for (const raw of payload.cart || []) {
@@ -975,7 +1074,11 @@ export default async function posView(ctx) {
     document.querySelectorAll(".overlay").forEach((node) => node.remove());
     renderLeft();
     renderCart();
-    toast("Order resumed.", "success");
+    if (charge && state.cart.length) {
+      openPayment();
+    } else {
+      toast("Order resumed — it is back in the cart.", "success");
+    }
   }
 
   /* --------------------------------------------------------------------- */
@@ -1271,7 +1374,7 @@ export default async function posView(ctx) {
       icon: "map",
       onClick: () => {
         state.locationId = branch.id;
-        localStorage.setItem(`pos-branch:${currentCompany()?.slug || "default"}`, String(branch.id));
+        setBranchScope(branch.id);
         toast(`Selling from ${branch.name}.`, "info");
         renderLeft();
       },

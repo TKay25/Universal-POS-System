@@ -12,7 +12,7 @@ from app.defaults import (
     PREFERENCE_THEMES,
 )
 from app.extensions import db
-from app.models import Announcement, Company, User
+from app.models import Announcement, Company, Location, User
 from app.modules import public_catalog
 from app.security import (
     ApiError,
@@ -58,6 +58,10 @@ def build_session_payload(user: User) -> dict:
         "user": user.to_dict(),
         "is_developer": user.is_developer,
         "company": company.to_dict(detail=True) if company else None,
+        "locations": [
+            row.to_dict()
+            for row in Location.query.filter_by(company_id=company.id, is_active=True).order_by(Location.name)
+        ] if company else [],
         "modules": company.module_state if company else {},
         "module_catalog": public_catalog(),
         "permissions_catalog": PERMISSIONS,

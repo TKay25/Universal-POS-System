@@ -66,6 +66,30 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     @app.before_request
     def _guard():
         if request.path.startswith("/api/"):
+            # All branches is an aggregate, read-only context. Operational
+            # writes must belong to one shop; settings stay editable so a
+            # manager can create the branch they want to switch to.
+            if (
+                request.method in {"POST", "PUT", "PATCH", "DELETE"}
+                and request.headers.get("X-Branch-Scope") == "all"
+                and request.path not in {"/api/sales/lookup-receipt", "/api/discounts/validate"}
+                and request.path.startswith((
+                    "/api/sales", "/api/shifts", "/api/holds", "/api/laybys", "/api/products",
+                    "/api/categories", "/api/departments", "/api/customers", "/api/inventory",
+                ))
+            ):
+                return (
+                    jsonify(
+                        {
+                            "error": {
+                                "message": "All branches is read-only. Switch to a branch to make changes.",
+                                "code": "branch_required",
+                                "fields": {},
+                            }
+                        }
+                    ),
+                    409,
+                )
             try:
                 csrf_protect()
             except ApiError as error:
@@ -140,6 +164,16 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
                 "style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
                 "connect-src 'self'; font-src 'self' data:; frame-ancestors 'self'",
             )
+        if (
+            request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            and request.path.startswith("/api/")
+            and response.status_code < 400
+        ):
+            # Reports, PDFs and the till bundle are TTL cached; a successful
+            # write must not leave a stale dashboard or product list behind.
+            from app.services import cache
+
+            cache.clear()
         return response
 
     # ---- SPA shell -------------------------------------------------------- #

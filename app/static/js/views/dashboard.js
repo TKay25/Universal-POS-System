@@ -5,6 +5,7 @@ import { icon, productIcon } from "../core/icons.js";
 import { money, number, date, isoDay, addDays, rangeFromPreset } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
 import { settings, preferences, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
+import { branchQuery, branchScope } from "../core/branch.js";
 import {
   pageHeader, statCard, sectionCard, button, table, statusBadge, badge, toast, loadingBlock,
   emptyState, alertBox, moneyText, avatar,
@@ -27,9 +28,10 @@ export default async function dashboardView(ctx) {
   async function load() {
     const range = rangeFromPreset("30d", 29);
     const canReport = hasPerm("reports.view");
+    const scope = branchQuery();
     const [dashboardData, overviewData] = await Promise.all([
-      get("/reports/dashboard"),
-      canReport ? get("/reports/overview", range).catch(() => null) : Promise.resolve(null),
+      get("/reports/dashboard", scope),
+      canReport ? get("/reports/overview", { ...range, ...scope }).catch(() => null) : Promise.resolve(null),
     ]);
     today = dashboardData;
     overview = overviewData || {};
@@ -39,7 +41,7 @@ export default async function dashboardView(ctx) {
 
     const secondary = [];
     if (canReport) {
-      secondary.push(get("/reports/insights").then((data) => { insights = data; }).catch(() => null));
+      secondary.push(get("/reports/insights", { ...range, ...scope }).then((data) => { insights = data; }).catch(() => null));
     }
     if (hasPerm("settings.manage")) {
       secondary.push(get("/company/onboarding").then((data) => { onboarding = data; }).catch(() => null));
@@ -70,12 +72,13 @@ export default async function dashboardView(ctx) {
       ],
     );
 
+    const scope = branchScope();
     el.appendChild(pageHeader({
       title: `${greeting()}, ${user.full_name.split(" ")[0]}`,
-      subtitle: `${companyName()} · ${date(new Date(), { year: true })}`,
+      subtitle: `${companyName()} · ${scope.all ? "All branches · " : `${scope.label} · `}${date(new Date(), { year: true })}`,
       actions: [
         button("Reports", { icon: "chart", onClick: () => ctx.navigate("/reports") }),
-        hasPerm("pos.sell")
+        hasPerm("pos.sell") && !scope.all
           ? button("New sale", { variant: "primary", icon: "plus", onClick: () => ctx.navigate("/pos") })
           : null,
       ],
@@ -237,11 +240,20 @@ export default async function dashboardView(ctx) {
 
   function renderInsights(data) {
     const growth = data.revenue.growth_percent;
+    const periodLabel = data.period?.label || "Last 30 days";
     const wrap = h("div", { class: "grid grid--3 mb-4" });
 
     const card = (title, subtitle, body) => sectionCard({ title, subtitle, body });
 
-    wrap.appendChild(card("Revenue boost", "Last 30 days vs previous 30", h("div", { class: "col gap-3" },
+    const productRow = (row, tone = "") => h("div", { class: "flex items-center gap-2" },
+      h("div", { class: "grow", style: { minWidth: 0 } },
+        h("div", { class: "truncate small strong" }, row.name),
+        h("div", { class: "tiny dim" }, `${number(row.qty, 1)} sold · ${number(row.share_percent ?? 0, 1)}% of revenue`)),
+      h("div", { style: { textAlign: "right" } },
+        h("div", { class: "small strong num" }, money(row.revenue_cents)),
+        h("div", { class: `tiny ${tone || "dim"}` }, `${money(row.profit_cents)} profit`)));
+
+    wrap.appendChild(card("Revenue boost", periodLabel, h("div", { class: "col gap-3" },
       h("div", { class: "flex items-end justify-between" },
         h("div", { class: "kpi__value", style: { fontSize: "22px" } }, money(data.revenue.last_30_cents)),
         growth == null
@@ -251,13 +263,25 @@ export default async function dashboardView(ctx) {
       h("div", { class: "progress" }, h("div", { class: "progress__bar", style: { width: `${Math.min(100, Math.max(4, (data.revenue.last_30_cents / Math.max(1, Math.max(data.revenue.last_30_cents, data.revenue.previous_30_cents))) * 100))}%` } })),
       h("div", { class: "flex justify-between small" },
         h("span", {}, `Today ${money(data.revenue.today_cents)}`),
-        h("span", { class: "dim" }, `Yesterday ${money(data.revenue.yesterday_cents)}`)))));
+        h("span", { class: "dim" }, `Yesterday ${money(data.revenue.yesterday_cents)}`)),
+      h("div", { class: "flex gap-2 wrap" },
+        badge(`${data.metrics?.margin_percent ?? 0}% margin`, "primary"),
+        badge(`${data.metrics?.discount_rate ?? 0}% discounts`, "info"),
+        badge(`${data.metrics?.refund_rate ?? 0}% refunds`, (data.metrics?.refund_rate || 0) >= 3 ? "warning" : "success")))));
 
-    wrap.appendChild(card("Profit leaders", "Revenue minus buying price (30 days)", barList({
+    wrap.appendChild(card("Top 3 products", `${periodLabel} · revenue and profit`, h("div", { class: "col gap-2" },
+      (data.top_products || data.product_performance?.top || []).slice(0, 3).map((row) => productRow(row)),
+      !(data.top_products || []).length ? h("div", { class: "small dim" }, "No product sales in this period yet.") : null)));
+
+    wrap.appendChild(card("Watchlist · lowest 3", `${periodLabel} · review price, placement or promotion`, h("div", { class: "col gap-2" },
+      (data.least_products || data.product_performance?.least || []).slice(0, 3).map((row) => productRow(row, "warning")),
+      !(data.least_products || []).length ? h("div", { class: "small dim" }, "Not enough product history to rank yet.") : null)));
+
+    wrap.appendChild(card("Profit leaders", `${periodLabel} · revenue minus buying price`, barList({
       rows: (data.profit_leaders || []).map((row) => ({ label: row.name, value: row.profit_cents })),
     })));
 
-    wrap.appendChild(card("Needs attention", "Slow movers and restock needs", h("div", { class: "col gap-2" },
+    wrap.appendChild(card("Needs attention", "Slow movers, stock and lay-bys", h("div", { class: "col gap-2" },
       (data.slow_movers || []).slice(0, 3).map((row) => h("div", { class: "flex items-center gap-2" },
         h("div", { class: "grow", style: { minWidth: 0 } },
           h("div", { class: "truncate small strong" }, row.name),
@@ -268,9 +292,15 @@ export default async function dashboardView(ctx) {
         ? h("div", { class: "flex justify-between small" }, h("span", {}, "Lay-by outstanding"), h("span", { class: "num strong" }, money(data.layby.outstanding_cents)))
         : null)));
 
-    const tipsCard = card("Management actions", `Busiest hour ${data.busiest_hour != null ? `${String(data.busiest_hour).padStart(2, "0")}:00` : "-"} / ${data.repeat_customers_30d} repeat customers`,
+    if ((data.branches || []).length > 1) {
+      wrap.appendChild(card("Branch performance", `${periodLabel} · cross-shop comparison`, barList({
+        rows: (data.branches || []).slice(0, 6).map((row) => ({ label: row.name, value: row.revenue_cents })),
+      })));
+    }
+
+    const tipsCard = card("Management actions", `${(data.management_actions || data.tips || []).length} actions · ${periodLabel}`,
       h("div", { class: "col gap-2" },
-        (data.tips || []).map((tip) => h("button", {
+        (data.management_actions || data.tips || []).map((tip) => h("button", {
           class: `alert alert--${tip.tone}`,
           type: "button",
           style: { textAlign: "left", cursor: "pointer" },
@@ -283,10 +313,10 @@ export default async function dashboardView(ctx) {
           button("Open reports", { size: "sm", icon: "chart", onClick: () => ctx.navigate("/reports") }),
           button("Manage stock", { size: "sm", variant: "ghost", icon: "layers", onClick: () => ctx.navigate("/inventory") }))));
     wrap.appendChild(tipsCard);
-    return h("div", {}, h("div", { class: "flex items-center gap-2 mb-2" },
-      h("div", { class: "settings-card__title" }, "Quick insights"),
-      badge("For management", "primary"),
-      h("span", { class: "tiny dim" }, `As of ${data.local_today}`)),
+    return h("div", {}, h("div", { class: "flex items-center gap-2 mb-2 wrap" },
+      h("div", { class: "settings-card__title" }, "Management cockpit"),
+      badge("All-round view", "primary"),
+      h("span", { class: "tiny dim" }, `${data.branch?.name || "All branches"} · ${periodLabel}`)),
     wrap);
   }
 

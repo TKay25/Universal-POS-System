@@ -5,11 +5,10 @@ import { icon } from "../core/icons.js";
 import { money, number, date, dateTime } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox, field,
+import { requireBranchAction } from "../core/branch.js";
+import { pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox, field,
   textInput, textarea, select, switchControl, modal, drawer, confirmDialog, formGrid, moneyInput,
-  emptyState, statCard, statusBadge, kvList, avatar,
-} from "../core/ui.js";
+  emptyState, statCard, statusBadge, kvList, avatar, searchLoader } from "../core/ui.js";
 import { openSaleDetail } from "./saleDetail.js";
 
 export default async function customersView(ctx) {
@@ -22,7 +21,7 @@ export default async function customersView(ctx) {
   const tableHost = h("div");
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
 
-  const searchInput = textInput({ placeholder: "Search name, phone or email…", className: "input--sm" });
+  const searchInput = searchLoader(textInput({ placeholder: "Search name, phone or email…", className: "input--sm" }));
   searchInput.addEventListener("input", debounce(() => {
     filters.q = searchInput.value.trim();
     page = 1;
@@ -113,6 +112,7 @@ export default async function customersView(ctx) {
   }
 
   function openCustomerForm(customer = null) {
+  if (!requireBranchAction()) return;
     const isEdit = Boolean(customer?.id);
     const name = textInput({ value: customer?.name || "", placeholder: "Full name" });
     const email = textInput({ type: "email", value: customer?.email || "", placeholder: "name@email.com" });
@@ -261,6 +261,7 @@ export default async function customersView(ctx) {
     }
 
     function openBalanceModal() {
+  if (!requireBranchAction()) return;
       const kind = select({ value: "credit", options: [{ value: "credit", label: "Store credit" }, { value: "loyalty", label: "Loyalty points" }] });
       const amount = textInput({ type: "number", step: "0.01", placeholder: "Use a minus sign to deduct" });
       const note = textInput({ placeholder: "Reason" });

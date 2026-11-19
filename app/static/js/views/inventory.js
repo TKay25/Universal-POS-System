@@ -5,16 +5,15 @@ import { icon, productIcon } from "../core/icons.js";
 import { money, number, qty as fmtQty, dateTime } from "../core/fmt.js";
 import { get, post, del, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox,
+import { pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox,
   field, textInput, select, modal, statusBadge, emptyState, formGrid, statCard, segmented, confirmDialog,
-  moneyInput,
-} from "../core/ui.js";
+  fundingPicker,
+  moneyInput, searchLoader } from "../core/ui.js";
 
 export default async function inventoryView(ctx) {
   const el = h("div");
   const state = {
-    tab: "levels", products: [], movements: [], suppliers: [], meta: null, movementMeta: null,
+    tab: "levels", products: [], movements: [], suppliers: [], meta: null, movementMeta: null, funding: null,
     loaded: false, search: "", from: "", to: "",
   };
 
@@ -36,7 +35,7 @@ export default async function inventoryView(ctx) {
   el.appendChild(kpiHost);
   el.appendChild(tabsHost);
 
-  const searchInput = textInput({ placeholder: "Search products, SKU or department…", className: "input--sm" });
+  const searchInput = searchLoader(textInput({ placeholder: "Search products, SKU or department…", className: "input--sm" }));
   searchInput.value = state.search;
   const fromInput = h("input", { class: "input input--sm", type: "date", style: { width: "150px" } });
   const toInput = h("input", { class: "input input--sm", type: "date", style: { width: "150px" } });
@@ -92,6 +91,7 @@ export default async function inventoryView(ctx) {
       return;
     }
     if (state.tab === "levels") tabsHost.appendChild(levelsCard());
+    if (state.tab === "levels") tabsHost.appendChild(fundingCard());
     if (state.tab === "movements") tabsHost.appendChild(movementsCard());
     if (state.tab === "suppliers") tabsHost.appendChild(suppliersCard());
   }
@@ -180,8 +180,61 @@ export default async function inventoryView(ctx) {
     const data = await get("/products", { per_page: 200, active: "1" });
     state.products = data.items;
     state.loaded = true;
+    await loadFunding();
     renderKpis();
     if (state.tab === "levels") render();
+  }
+
+  async function loadFunding() {
+    try {
+      state.funding = await get("/inventory/funding");
+    } catch {
+      state.funding = null;
+    }
+  }
+
+  function fundingCard() {
+    const data = state.funding;
+    if (!data || !data.total_cents) {
+      return sectionCard({
+        title: "Stock funding",
+        subtitle: "Where the money for your shelves came from",
+        body: h("div", { class: "col gap-2" },
+          h("div", { class: "small muted" },
+            "Next time you receive stock, say whether it was paid for with sales profit or external funds — the split shows up here.")),
+      });
+    }
+    const bar = (row, tone) => h("div", { class: "col gap-1" },
+      h("div", { class: "flex justify-between small" },
+        h("span", {}, row.label),
+        h("span", { class: "num strong" }, `${money(row.amount_cents)} · ${row.share_percent}%`)),
+      h("div", { class: "progress" }, h("div", {
+        class: `progress__bar${tone ? ` is-${tone}` : ""}`,
+        style: { width: `${Math.max(2, row.share_percent)}%` },
+      })));
+    return sectionCard({
+      title: "Stock funding",
+      subtitle: `${money(data.total_cents)} of stock bought · ${data.profit.entries + data.external.entries} purchase${data.profit.entries + data.external.entries === 1 ? "" : "s"}`,
+      actions: button("Record a purchase", {
+        size: "sm",
+        variant: "soft",
+        icon: "plus",
+        onClick: () => openReceiveModal(),
+      }),
+      body: h("div", { class: "col gap-3" },
+        bar(data.profit, "success"),
+        bar(data.external, "warning"),
+        data.recent.length
+          ? h("div", { class: "col gap-2 mt-2" },
+            h("div", { class: "tiny dim", style: { textTransform: "uppercase", letterSpacing: ".09em", fontWeight: "650" } }, "Latest purchases"),
+            data.recent.slice(0, 5).map((entry) => h("div", { class: "flex items-center gap-2" },
+              h("div", { class: "grow", style: { minWidth: 0 } },
+                h("div", { class: "small strong truncate" }, entry.product),
+                h("div", { class: "tiny dim" },
+                  `${dateTime(entry.created_at)}${entry.note ? ` · ${entry.note}` : ""}`)),
+              badge(entry.label, entry.source === "profit" ? "success" : "warning"),
+              h("span", { class: "num small strong" }, money(entry.amount_cents)))))
+          : null)});
   }
 
   function renderKpis() {
@@ -191,10 +244,10 @@ export default async function inventoryView(ctx) {
     const retailValue = tracked.reduce((sum, product) => sum + Math.round((product.stock_qty || 0) * (product.price_cents || 0)), 0);
     const low = tracked.filter((product) => product.is_low_stock).length;
     const out = tracked.filter((product) => product.stock_qty <= 0).length;
-    kpiHost.appendChild(statCard({ label: "Stock at cost", value: money(stockValue), icon: "cash", foot: `${tracked.length} tracked products` }));
-    kpiHost.appendChild(statCard({ label: "Retail value", value: money(retailValue), icon: "trend", foot: `Potential margin ${money(retailValue - stockValue)}`, tone: "success" }));
-    kpiHost.appendChild(statCard({ label: "Low stock", value: String(low), icon: "warn", foot: low ? "Reorder soon" : "All healthy", tone: low ? "warning" : "success" }));
-    kpiHost.appendChild(statCard({ label: "Out of stock", value: String(out), icon: "x", foot: out ? "Not sellable" : "All available", tone: out ? "danger" : "" }));
+    kpiHost.appendChild(statCard({ compact: true, label: "Stock at cost", value: money(stockValue), icon: "cash", foot: `${tracked.length} tracked products` }));
+    kpiHost.appendChild(statCard({ compact: true, label: "Retail value", value: money(retailValue), icon: "trend", foot: `Potential margin ${money(retailValue - stockValue)}`, tone: "success" }));
+    kpiHost.appendChild(statCard({ compact: true, label: "Low stock", value: String(low), icon: "warn", foot: low ? "Reorder soon" : "All healthy", tone: low ? "warning" : "success" }));
+    kpiHost.appendChild(statCard({ compact: true, label: "Out of stock", value: String(out), icon: "x", foot: out ? "Not sellable" : "All available", tone: out ? "danger" : "" }));
   }
 
   async function loadMovements() {
@@ -225,6 +278,15 @@ export default async function inventoryView(ctx) {
           },
           { key: "balance_after", label: "Balance", align: "right", render: (row) => h("span", { class: "num" }, fmtQty(row.balance_after)) },
           { key: "reference", label: "Reference", render: (row) => row.reference || h("span", { class: "dim" }, "—") },
+          {
+            key: "funding",
+            label: "Paid with",
+            render: (row) => row.funding
+              ? h("div", { class: "col" },
+                badge(row.funding.label, row.funding.source === "profit" ? "success" : "warning"),
+                h("span", { class: "tiny dim num" }, money(row.funding.amount_cents)))
+              : h("span", { class: "dim" }, "—"),
+          },
           { key: "user", label: "By", render: (row) => h("span", { class: "dim" }, row.user) },
         ],
       }));
@@ -311,6 +373,7 @@ export default async function inventoryView(ctx) {
       placeholder: "What you paid per unit",
       value: product.cost_cents ? (product.cost_cents / 100).toFixed(2) : "",
     });
+    const funding = fundingPicker({ required: false });
 
     function update() {
       preview.lastChild.textContent = fmtQty(Math.round(currentQty() * 1000) / 1000);
@@ -348,6 +411,9 @@ export default async function inventoryView(ctx) {
             ? field({ label: "Buying price", control: buyingPrice, required: true,
               hint: "What this stock cost you — FIFO uses it for profit and stock value." })
             : null,
+          state.direction > 0
+            ? h("div", { class: "col gap-3" }, funding.fields)
+            : null,
           field({ label: "Reason", control: deltaReason }),
           field({ label: "Note", control: note }),
         );
@@ -357,6 +423,9 @@ export default async function inventoryView(ctx) {
           addingStock()
             ? field({ label: "Buying price", control: buyingPrice, required: true,
               hint: "Used for the extra units this count adds (FIFO)." })
+            : null,
+          addingStock()
+            ? h("div", { class: "col gap-3" }, funding.fields)
             : null,
           field({ label: "Reason", control: setReason }),
           field({ label: "Note", control: note }),
@@ -387,12 +456,20 @@ export default async function inventoryView(ctx) {
             errorHost.appendChild(alertBox("Enter the buying price for the stock you are adding.", "danger"));
             return;
           }
+          if (addingStock() && !funding.value()) {
+            trigger.setLoading(false);
+            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
+            funding.picker.focus();
+            return;
+          }
           await post(`/products/${product.id}/stock`, {
             mode: state.tab,
             qty,
             reason: state.tab === "set" ? setReason.value : deltaReason.value,
             note: note.value.trim(),
             buying_price: addingStock() ? buyingPrice.value : undefined,
+            funding_source: addingStock() ? funding.value() : undefined,
+            funding_note: addingStock() ? funding.noteValue() : undefined,
           });
           toast("Stock adjusted.", "success");
           instance.close();
@@ -435,6 +512,8 @@ export default async function inventoryView(ctx) {
     const quantity = textInput({ type: "number", step: "0.001", placeholder: "0" });
     const buyingPrice = moneyInput({ placeholder: "What you paid per unit", value: product?.cost_cents ? (product.cost_cents / 100).toFixed(2) : "" });
     const sellingPrice = moneyInput({ placeholder: "Optional - updates selling price" });
+    const funding = fundingPicker({ required: true });
+    const fundingNew = fundingPicker({ required: true });
     const supplier = select({ value: "", options: [{ value: "", label: "No supplier" }] });
     const reference = textInput({ placeholder: "Invoice / delivery note" });
     const note = textInput({ placeholder: "e.g. Weekly coffee delivery" });
@@ -560,6 +639,7 @@ export default async function inventoryView(ctx) {
       field({ label: "Reference", control: reference }),
       field({ label: "Note", control: note }),
     ]));
+    existingHost.appendChild(formGrid(funding.fields));
 
     newHost.appendChild(field({ label: "Product name", control: newName, required: true, hint: "Start typing - if it exists, we will offer to add stock instead." }));
     newHost.appendChild(formGrid([
@@ -573,6 +653,7 @@ export default async function inventoryView(ctx) {
       field({ label: "Category", control: newCategory }),
       field({ label: "Unit", control: newUnit }),
     ]));
+    newHost.appendChild(formGrid(fundingNew.fields));
 
     async function submit() {
       clear(errorHost);
@@ -592,6 +673,11 @@ export default async function inventoryView(ctx) {
             buyingPrice.focus();
             return;
           }
+          if (!funding.value()) {
+            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
+            funding.picker.focus();
+            return;
+          }
           await post(`/products/${productSelect.value}/stock`, {
             mode: "delta",
             qty,
@@ -601,6 +687,8 @@ export default async function inventoryView(ctx) {
             note: note.value.trim() || "Stock received",
             buying_price: buyingPrice.value,
             selling_price: sellingPrice.value !== "" ? sellingPrice.value : undefined,
+            funding_source: funding.value(),
+            funding_note: funding.noteValue(),
           });
           toast("Stock received.", "success");
         } else {
@@ -611,6 +699,11 @@ export default async function inventoryView(ctx) {
           if (!newBuying.value) {
             errorHost.appendChild(alertBox("A new product needs its buying price.", "danger"));
             newBuying.focus();
+            return;
+          }
+          if (!fundingNew.value()) {
+            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
+            fundingNew.picker.focus();
             return;
           }
           const { item } = await post("/products", {
@@ -625,6 +718,8 @@ export default async function inventoryView(ctx) {
             category_id: newCategory.value ? Number(newCategory.value) : null,
             unit: newUnit.value.trim() || "unit",
             icon: "box",
+            funding_source: fundingNew.value(),
+            funding_note: fundingNew.noteValue(),
           });
           toast(`${item.name} added to the catalog.`, "success");
         }

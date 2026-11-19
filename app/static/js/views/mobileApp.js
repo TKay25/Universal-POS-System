@@ -9,7 +9,7 @@ import {
 } from "../core/store.js";
 import { toggleThemePreference } from "../core/prefs.js";
 import {
-  button, iconButton, menu, toast, alertBox, loadingBlock, statusBadge, emptyState,
+  button, iconButton, menu, toast, alertBox, loadingBlock, statusBadge, emptyState, searchLoader,
 } from "../core/ui.js";
 import { areaChart } from "../core/charts.js";
 import { busyOverlay, withButtonSpinner } from "../core/loading.js";
@@ -344,11 +344,11 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
       load("sales", () => get("/sales", { ...range(), per_page: 25, q: state.search || undefined }));
       return;
     }
-    const search = h("input", {
+    const search = searchLoader(h("input", {
       class: "input",
       placeholder: "Search receipt or customer…",
       value: state.search,
-    });
+    }));
     search.addEventListener("input", () => {
       state.search = search.value.trim();
       clearTimeout(search._timer);
@@ -466,7 +466,7 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     const out = all.filter((row) => Number(row[3]) <= 0).length;
     const canExport = hasPerm("reports.export");
 
-    const search = h("input", { class: "input", placeholder: "Search product, SKU or department…", value: state.stockSearch });
+    const search = searchLoader(h("input", { class: "input", placeholder: "Search product, SKU or department…", value: state.stockSearch }));
     search.addEventListener("input", () => {
       state.stockSearch = search.value.trim();
       clearTimeout(search._timer);
@@ -505,11 +505,11 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
       return;
     }
     const items = data.items || [];
-    const search = h("input", {
+    const search = searchLoader(h("input", {
       class: "input",
       placeholder: "Search action, detail or person…",
       value: state.activitySearch,
-    });
+    }));
     search.addEventListener("input", () => {
       state.activitySearch = search.value.trim();
       clearTimeout(search._timer);

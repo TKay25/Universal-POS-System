@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import func, select
 
 from app.extensions import db
-from app.models import Sale
+from app.models import Sale, SaleItem
 from app.services.reports import REVENUE_STATUSES, overview
 from app.services.timezones import local_day_bounds, local_range_bounds, to_local
 from app.utils import format_money, utcnow
@@ -223,6 +223,44 @@ def _period_block(
     return "\n".join(lines)
 
 
+def _product_period(company, start: date, end: date):
+    """Top and weakest products for the exact reporting period."""
+    start_utc, end_utc = local_range_bounds(start, end, company)
+    rows = db.session.execute(
+        select(
+            SaleItem.name,
+            func.coalesce(func.sum(SaleItem.line_total_cents), 0),
+            func.coalesce(func.sum(SaleItem.qty * SaleItem.cost_cents), 0),
+            func.coalesce(func.sum(SaleItem.qty), 0),
+        )
+        .join(Sale, Sale.id == SaleItem.sale_id)
+        .where(
+            Sale.company_id == company.id,
+            Sale.created_at >= start_utc,
+            Sale.created_at <= end_utc,
+            Sale.status.in_(REVENUE_STATUSES),
+        )
+        .group_by(SaleItem.name)
+        .having(func.sum(SaleItem.qty) > 0)
+    ).all()
+    products = [
+        {
+            "name": row[0],
+            "revenue_cents": int(row[1] or 0),
+            "profit_cents": int(row[1] or 0) - int(row[2] or 0),
+            "qty": round(float(row[3] or 0), 1),
+        }
+        for row in rows
+    ]
+    top = sorted(products, key=lambda row: row["revenue_cents"], reverse=True)[:3]
+    top_names = {row["name"] for row in top}
+    least = [
+        row for row in sorted(products, key=lambda row: row["revenue_cents"])
+        if row["name"] not in top_names
+    ][:3]
+    return top, least
+
+
 def _advice(company, day, yesterday, week, previous_week, month, year, dashboard, today) -> list[str]:
     tips: list[str] = []
     if not day["transactions"]:
@@ -367,9 +405,12 @@ def build_executive_summary(company, at: datetime | None = None) -> dict:
         include_breakdowns=True,
         include_payments=True,
         include_lists=True,
-        include_branches=False,
+        include_branches=True,
         include_departments=False,
     )
+    top_period, least_period = _product_period(company, today, today)
+    week_top, _ = _product_period(company, week_start, today)
+    month_top, _ = _product_period(company, month_start, today)
 
     day_comparison = (
         f"{_comparison(day['sales_cents'], yesterday_stats['sales_cents'], 'yesterday')} · "
@@ -423,14 +464,33 @@ def build_executive_summary(company, at: datetime | None = None) -> dict:
         ),
     ]
 
-    top_products = dashboard.get("top_products") or []
+    top_products = top_period
     if top_products:
-        lines = ["*TOP PRODUCTS TODAY*"]
-        for item in top_products[:3]:
+        lines = ["*TOP 3 PRODUCTS TODAY*"]
+        for item in top_products:
             lines.append(
                 f"• {item.get('name', 'Product')} — {_money(item.get('revenue_cents') or 0, company)}"
                 f" ({int(item.get('qty') or 0):,} sold)"
             )
+        sections.append("\n".join(lines))
+    for label, rows in (("THIS WEEK", week_top), ("THIS MONTH", month_top)):
+        if not rows:
+            continue
+        lines = [f"*TOP 3 PRODUCTS {label}*"]
+        for item in rows:
+            lines.append(
+                f"• {item.get('name', 'Product')} — {_money(item.get('revenue_cents') or 0, company)}"
+                f" ({int(item.get('qty') or 0):,} sold)"
+            )
+        sections.append("\n".join(lines))
+    if least_period:
+        lines = ["*WATCHLIST · LOWEST 3 TODAY*"]
+        for item in least_period:
+            lines.append(
+                f"• {item.get('name', 'Product')} — {_money(item.get('revenue_cents') or 0, company)}"
+                f" ({int(item.get('qty') or 0):,} sold)"
+            )
+        lines.append("_Review price, placement or a bundle for these lines._")
         sections.append("\n".join(lines))
 
     payment_mix = dashboard.get("payment_mix") or []
@@ -442,7 +502,32 @@ def build_executive_summary(company, at: datetime | None = None) -> dict:
         ]
         sections.append("*PAYMENTS TODAY*\n" + " · ".join(parts))
 
-    advice = _advice(company, day, yesterday_stats, week, previous_week, month, year_stats, dashboard, today)
+    branches = dashboard.get("branches") or []
+    if len(branches) > 1:
+        lines = ["*BRANCH PERFORMANCE TODAY*"]
+        for row in branches[:4]:
+            profit = int(row.get("profit_cents") or 0)
+            lines.append(
+                f"• {row.get('name', 'Branch')} — {_money(row.get('sales_cents') or 0, company)}"
+                f" ({_money(profit, company)} profit)"
+            )
+        sections.append("\n".join(lines))
+
+    team = dashboard.get("team") or []
+    if team:
+        lines = ["*BY TEAM MEMBER · TODAY*"]
+        for row in team[:6]:
+            lines.append(
+                f"• {row.get('name', 'Cashier')} — {_money(row.get('sales_cents') or 0, company)}"
+                f" · {int(row.get('transactions') or 0)} sales"
+                f" · {_money(row.get('profit_cents') or 0, company)} profit"
+            )
+        if len(team) > 6:
+            lines.append(f"_+{len(team) - 6} more team member(s) in the dashboard_")
+        sections.append("\n".join(lines))
+
+    advice = _advice(company, day, yesterday_stats, week, previous_week, month, year_stats,
+                     {**dashboard, "top_products": top_period}, today)
     sections.append("*MANAGEMENT ADVICE*\n" + "\n".join(f"• {tip}" for tip in advice))
 
     tz_name = local_now.strftime("%Z") if isinstance(local_now, datetime) else ""
@@ -477,7 +562,12 @@ def build_executive_summary(company, at: datetime | None = None) -> dict:
             "best_day": best_day,
         },
         "advice": advice,
-        "top_products": top_products[:3],
+        "top_products": top_products,
+        "least_products": least_period,
+        "top_products_week": week_top,
+        "top_products_month": month_top,
         "payment_mix": payment_mix[:3],
         "low_stock": (dashboard.get("low_stock") or [])[:10],
+        "branches": dashboard.get("branches") or [],
+        "team": dashboard.get("team") or [],
     }

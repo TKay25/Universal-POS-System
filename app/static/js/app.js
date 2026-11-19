@@ -2,7 +2,7 @@
 
 import { h, clear, mount, $ } from "./core/dom.js";
 import { icon } from "./core/icons.js";
-import { money, dateTime, initials, timeZone } from "./core/fmt.js";
+import { money, dateTime, initials, timeZone, isoDay } from "./core/fmt.js";
 import {
   store, applyBranding, getSession, isAuthed, isDeveloper, impersonating, moduleOn,
   hasPerm, hasAny, companyName, currentUser, currentCompany, preferences,
@@ -11,6 +11,9 @@ import { toggleThemePreference, savePreferences } from "./core/prefs.js";
 import { api, get, post } from "./core/http.js";
 import { tabs } from "./core/tabs.js";
 import { createRouter } from "./core/router.js";
+import {
+  ALL_BRANCHES, branchLocations, branchQuery, branchScope, isAllBranches, setBranchScope,
+} from "./core/branch.js";
 import { initPwa, installApp, isStandalone, canInstall } from "./core/pwa.js";
 import {
   button, iconButton, avatar, modal, drawer, toast, menu, field, textInput, switchRow,
@@ -339,8 +342,18 @@ async function boot() {
     return;
   }
 
-  if (isAuthed()) renderShell();
-  else renderAuth();
+  if (isAuthed()) {
+    // Signed-in users always land on a real screen, never on the sign-in hash.
+    const hash = window.location.hash.replace(/^#/, "");
+    if (!hash || hash === "/login" || hash === "/register") {
+      const canSell = currentCompany() && moduleOn("pos") && hasPerm("pos.sell");
+      const target = canSell ? "/pos" : "/dashboard";
+      window.history.replaceState({ path: target }, "", `#${target}`);
+    }
+    renderShell();
+  } else {
+    renderAuth();
+  }
 }
 
 /* The installed app opens from its cache, so the first thing a user sees
@@ -368,6 +381,9 @@ function renderAuth(message = "") {
     initialError: message,
     onAuthed: () => {
       store.set({ ready: true });
+      const canSell = currentCompany() && moduleOn("pos") && hasPerm("pos.sell");
+      const target = canSell ? "/pos" : "/dashboard";
+      window.history.replaceState({ path: target }, "", `#${target}`);
       renderShell();
     },
   }));
@@ -500,6 +516,9 @@ function renderShell() {
     onDenied: (message) => toast(message, "warning", "Not available"),
   });
   router.start();
+  if (!window.location.hash.startsWith("#/pos")) {
+    setTimeout(prefetchCoreReports, 800);
+  }
 }
 
 function renderSidebar(sidebar) {
@@ -597,6 +616,49 @@ function wireSidebarDrawer(sidebar) {
   };
 }
 
+function branchPicker() {
+  const company = currentCompany();
+  const locations = branchLocations();
+  if (!company || locations.length < 2) return null;
+  const scope = branchScope();
+  const onPos = window.location.hash.startsWith("#/pos");
+  const buttonEl = h("button", {
+    class: `btn btn--sm topbar__branch${scope.all ? " is-all" : ""}`,
+    type: "button",
+    title: scope.all ? "All branches — read-only aggregate view" : `Selling and viewing ${scope.label}`,
+  }, icon("map"), h("span", {}, scope.label),
+  scope.all ? h("span", { class: "topbar__branch-tag" }, "read-only") : null,
+  icon("chevronDown"));
+
+  buttonEl.addEventListener("click", () => {
+    const items = [
+      ...(onPos ? [] : [{
+        label: "All branches",
+        icon: "layers",
+        onClick: () => switchBranch(ALL_BRANCHES),
+      }]),
+      "-",
+      ...locations.map((row) => ({
+        label: `${row.name}${row.is_default ? " (default)" : ""}`,
+        icon: "map",
+        onClick: () => switchBranch(row.id),
+      })),
+    ];
+    if (hasPerm("settings.manage")) {
+      items.push("-", { label: "Manage branches", icon: "settings", onClick: () => router?.go("/settings/locations") });
+    }
+    menu(buttonEl, items);
+  });
+  return buttonEl;
+}
+
+function switchBranch(value) {
+  const scope = setBranchScope(value);
+  renderTopbar(document.querySelector(".topbar"));
+  router?.refresh();
+  toast(scope.all ? "Showing all branches (read-only)." : `Now working in ${scope.label}.`, "info");
+}
+
 function renderTopbar(topbar) {
   clear(topbar);
   const company = currentCompany();
@@ -614,6 +676,8 @@ function renderTopbar(topbar) {
     icon("building"),
     h("span", { class: "topbar__company" }, company?.name || "Universal POS"));
   topbar.appendChild(h("div", { class: "topbar__lead" }, title, crumbs));
+  const picker = branchPicker();
+  if (picker) topbar.appendChild(picker);
   topbar.appendChild(h("div", { class: "topbar__spacer" }));
   topbar.appendChild(h("div", {
     class: "topbar__clock",
@@ -651,7 +715,7 @@ function renderTopbar(topbar) {
   });
   topbar.appendChild(themeBtn);
 
-  if (hasPerm("pos.sell") && currentCompany()) {
+  if (hasPerm("pos.sell") && currentCompany() && !isAllBranches()) {
     topbar.appendChild(button("New sale", {
       variant: "primary",
       size: "sm",
@@ -990,6 +1054,38 @@ window.addEventListener("pos:preferences-changed", () => {
     themeBtn.replaceChildren(icon(themeIconName()));
     themeBtn.title = themeActionLabel();
   }
+});
+
+window.addEventListener("pos:branch-changed", () => {
+  if (!shellEl || shellMode !== "desktop") return;
+  const topbar = shellEl.querySelector(".topbar");
+  if (topbar) renderTopbar(topbar);
+  corePrefetched = false;
+  setTimeout(prefetchCoreReports, 600);
+});
+
+window.addEventListener("pos:branch-required", (event) => {
+  toast(event.detail?.message || "Switch to a branch to make changes.", "warning");
+});
+
+let corePrefetched = false;
+function prefetchCoreReports() {
+  if (corePrefetched || !currentCompany() || !hasPerm("reports.view")) return;
+  corePrefetched = true;
+  const today = isoDay();
+  const query = { from: today, to: today, lists: 0, ...branchQuery() };
+  setTimeout(() => {
+    get("/reports/comparison", query).catch(() => null);
+    get("/reports/overview", query).catch(() => null);
+  }, 250);
+}
+
+window.addEventListener("pos:ready", prefetchCoreReports);
+
+window.addEventListener("pos:session-refreshed", () => {
+  if (!shellEl || shellMode !== "desktop") return;
+  const topbar = shellEl.querySelector(".topbar");
+  if (topbar) renderTopbar(topbar);
 });
 
 window.addEventListener("pos:install-available", () => {

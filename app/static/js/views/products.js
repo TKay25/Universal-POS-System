@@ -5,11 +5,11 @@ import { icon, productIcon, PRODUCT_ICON_NAMES } from "../core/icons.js";
 import { money, number, percent, qty as fmtQty } from "../core/fmt.js";
 import { get, post, patch, del, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig, currency } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, emptyState, alertBox,
+import { requireBranchAction } from "../core/branch.js";
+import { pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, emptyState, alertBox,
   field, textInput, textarea, select, switchControl, modal, confirmDialog, menu, formGrid, moneyInput,
-  segmented, drawer, switchRow,
-} from "../core/ui.js";
+  fundingPicker,
+  segmented, drawer, switchRow, searchLoader } from "../core/ui.js";
 
 const COLORS = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9", "#f97316", "#64748b"];
 
@@ -27,7 +27,7 @@ export default async function productsView(ctx) {
   const tableHost = h("div");
   const categoryChips = h("div", { class: "chips" });
 
-  const searchInput = textInput({ placeholder: "Search name, SKU or barcode…", className: "input--sm" });
+  const searchInput = searchLoader(textInput({ placeholder: "Search name, SKU or barcode…", className: "input--sm" }));
   searchInput.addEventListener("input", debounce(() => {
     filters.q = searchInput.value.trim();
     page = 1;
@@ -166,6 +166,7 @@ export default async function productsView(ctx) {
   function openRowMenu(anchor, product) {
     menu(anchor, [
       { label: "Edit product", icon: "edit", onClick: () => openProductForm(product) },
+      { label: "Move to department / category", icon: "layers", onClick: () => openMoveModal(product) },
       moduleOn("inventory") ? { label: "Adjust stock", icon: "layers", onClick: () => openStockModal(product) } : null,
       { label: "Print label", icon: "barcode", onClick: () => printLabel(product) },
       { label: "Duplicate", icon: "copy", onClick: () => openProductForm({ ...product, id: null, name: `${product.name} (copy)` }) },
@@ -204,6 +205,7 @@ export default async function productsView(ctx) {
   /* Product editor                                                         */
   /* --------------------------------------------------------------------- */
   function openProductForm(product = null) {
+  if (!requireBranchAction()) return;
     const isEdit = Boolean(product && product.id);
     const suggestionId = `product-suggestions-${Date.now()}`;
     const name = textInput({
@@ -227,8 +229,9 @@ export default async function productsView(ctx) {
     const sku = textInput({ value: product?.sku || "", placeholder: "SKU-001" });
     const barcode = textInput({ value: product?.barcode || "", placeholder: "Scan or type a barcode" });
     const description = textarea({ value: product?.description || "", rows: 2 });
+    const initialCategory = categories.find((c) => String(c.id) === String(product?.category_id || ""));
     const department = select({
-      value: product?.department_id || "",
+      value: product?.department_id || initialCategory?.department_id || "",
       options: [{ value: "", label: "No department" }, ...departments.map((d) => ({ value: d.id, label: d.name }))],
     });
     const category = select({
@@ -254,6 +257,16 @@ export default async function productsView(ctx) {
     const unit = textInput({ value: product?.unit || "unit", placeholder: "unit / kg / hour" });
     const stock = textInput({ type: "number", value: product ? String(product.stock_qty) : "0", step: "0.001" });
     const threshold = textInput({ type: "number", value: String(product?.low_stock_threshold ?? 5), min: "0" });
+    const funding = fundingPicker({ required: false });
+    const openingFundingHost = h("div", { class: "col gap-3" }, funding.fields);
+    const originalStock = Number(product?.stock_qty || 0);
+    const addsStock = () => Number(stock.value) > originalStock;
+    const updateOpeningFunding = () => {
+      const shows = addsStock();
+      openingFundingHost.classList.toggle("hidden", !shows);
+      if (shows && !cost.value && product?.cost_cents) cost.value = (product.cost_cents / 100).toFixed(2);
+    };
+    stock.addEventListener("input", updateOpeningFunding);
     const iconHost = h("div", { class: "thumbs" });
     let chosenIcon = product?.icon || "box";
     const colorHost = h("div", { class: "thumbs" });
@@ -313,13 +326,16 @@ export default async function productsView(ctx) {
       formGrid([
         field({ label: "On hand", control: stock }),
         field({ label: "Low stock at", control: threshold }),
-      ]));
+      ]),
+      openingFundingHost);
 
     trackStock.input.addEventListener("change", () => {
       stockFields.style.opacity = trackStock.input.checked ? "1" : ".45";
       stock.disabled = !trackStock.input.checked;
+      updateOpeningFunding();
     });
     if (!trackStock.input.checked) stockFields.style.opacity = ".45";
+    updateOpeningFunding();
 
     const submit = button(isEdit ? "Save changes" : "Create product", { variant: "primary" });
 
@@ -357,6 +373,13 @@ export default async function productsView(ctx) {
     submit.addEventListener("click", async () => {
       submit.setLoading(true);
       clear(errorHost);
+      const addingStock = trackStock.input.checked && addsStock();
+      if (addingStock && !funding.value()) {
+        errorHost.appendChild(alertBox("Say where the money for this stock came from — sales profit or external funds.", "danger"));
+        funding.picker.focus();
+        submit.setLoading(false);
+        return;
+      }
       const customValues = {};
       customHost.querySelectorAll("[data-custom-key]").forEach((control) => {
         const key = control.dataset.customKey;
@@ -382,6 +405,8 @@ export default async function productsView(ctx) {
         is_active: active.input.checked,
         is_featured: featured.input.checked,
         custom_fields: customValues,
+        funding_source: addingStock ? funding.value() : undefined,
+        funding_note: addingStock ? funding.noteValue() : undefined,
       };
       try {
         if (isEdit) {
@@ -402,14 +427,78 @@ export default async function productsView(ctx) {
   }
 
   /* --------------------------------------------------------------------- */
+  /* Move a product between departments / categories                         */
+  /* --------------------------------------------------------------------- */
+  function openMoveModal(product) {
+    if (!requireBranchAction()) return;
+    const currentCategory = categories.find((c) => String(c.id) === String(product.category_id || ""));
+    const department = select({
+      value: product.department_id || currentCategory?.department_id || "",
+      options: [{ value: "", label: "No department" }, ...departments.map((d) => ({ value: d.id, label: d.name }))],
+    });
+    const category = select({
+      value: product.category_id || "",
+      options: [],
+    });
+    const errorHost = h("div");
+
+    const fillCategories = (keep) => {
+      clear(category);
+      category.appendChild(h("option", { value: "" }, "Uncategorised"));
+      for (const row of categories.filter((c) => !department.value || String(c.department_id) === String(department.value))) {
+        category.appendChild(h("option", { value: row.id, selected: String(row.id) === String(keep) }, row.name));
+      }
+    };
+    fillCategories(product.category_id || "");
+    department.addEventListener("change", () => fillCategories(""));
+
+    const submit = button("Move product", { variant: "primary", icon: "check" });
+    const instance = modal({
+      title: `Move ${product.name}`,
+      subtitle: "Re-filing is instant — sales history keeps its original prices",
+      size: "sm",
+      body: h("div", { class: "col gap-3" }, errorHost,
+        field({ label: "Department", control: department }),
+        field({ label: "Category", control: category, hint: "Only categories in the chosen department are listed." })),
+      footer: [button("Cancel", { onClick: () => instance.close() }), submit],
+    });
+
+    submit.addEventListener("click", async () => {
+      submit.setLoading(true);
+      clear(errorHost);
+      const chosenCategory = categories.find((c) => String(c.id) === String(category.value || ""));
+      try {
+        await patch(`/products/${product.id}`, {
+          department_id: department.value
+            ? Number(department.value)
+            : (chosenCategory?.department_id || null),
+          category_id: category.value ? Number(category.value) : null,
+        });
+        toast(`${product.name} moved.`, "success");
+        instance.close();
+        load();
+      } catch (error) {
+        errorHost.appendChild(alertBox(error.message, "danger"));
+        submit.setLoading(false);
+      }
+    });
+  }
+
+  /* --------------------------------------------------------------------- */
   /* Stock                                                                  */
   /* --------------------------------------------------------------------- */
   function openStockModal(product) {
+  if (!requireBranchAction()) return;
     const mode = h("div", { class: "segmented" });
     let currentMode = "delta";
     const amount = moneyInput({ placeholder: "0" });
     amount.type = "number";
     amount.step = "0.001";
+    const buyingPrice = moneyInput({
+      placeholder: "What you paid per unit",
+      value: product.cost_cents ? (product.cost_cents / 100).toFixed(2) : "",
+    });
+    const funding = fundingPicker({ required: true });
     const reason = select({
       value: "receive",
       options: [
@@ -444,8 +533,18 @@ export default async function productsView(ctx) {
       preview.lastChild.textContent = fmtQty(next);
       preview.style.background = next < 0 ? "var(--danger-soft)" : "var(--surface-3)";
       preview.style.color = next < 0 ? "var(--danger)" : "var(--text)";
+      const adding = next > Number(product.stock_qty || 0);
+      if (extraHost) extraHost.classList.toggle("hidden", !adding);
+      if (adding && product.track_stock && !buyingPrice.value && product.cost_cents) {
+        buyingPrice.value = (product.cost_cents / 100).toFixed(2);
+      }
     }
     amount.addEventListener("input", updatePreview);
+
+    const extraHost = h("div", { class: "col gap-3 hidden" },
+      field({ label: "Buying price", control: buyingPrice, required: true,
+        hint: "What this stock cost you — FIFO uses it for profit and stock value." }),
+      funding.fields);
     setMode("delta");
 
     const instance = modal({
@@ -458,9 +557,25 @@ export default async function productsView(ctx) {
         field({ label: "Reason", control: reason }),
         field({ label: "Note", control: note }),
         field({ label: "Reference", control: reference }),
+        extraHost,
         preview),
       footer: [button("Cancel", { onClick: () => instance.close() }),
-        button("Apply", { variant: "primary", onClick: async () => {
+        button("Apply", { variant: "primary", onClick: async (event) => {
+          const trigger = event.currentTarget;
+          clear(errorHost);
+          const next = currentMode === "set" ? Number(amount.value) || 0 : Number(product.stock_qty) + (Number(amount.value) || 0);
+          const adding = next > Number(product.stock_qty || 0);
+          if (adding && buyingPrice.value === "") {
+            errorHost.appendChild(alertBox("Enter the buying price for the stock you are adding.", "danger"));
+            buyingPrice.focus();
+            return;
+          }
+          if (adding && !funding.value()) {
+            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
+            funding.picker.focus();
+            return;
+          }
+          trigger.setLoading(true);
           try {
             await post(`/products/${product.id}/stock`, {
               mode: currentMode,
@@ -468,6 +583,9 @@ export default async function productsView(ctx) {
               reason: reason.value,
               note: note.value.trim(),
               reference: reference.value.trim(),
+              buying_price: adding ? buyingPrice.value : undefined,
+              funding_source: adding ? funding.value() : undefined,
+              funding_note: adding ? funding.noteValue() : undefined,
             });
             toast("Stock updated.", "success");
             instance.close();
@@ -475,6 +593,8 @@ export default async function productsView(ctx) {
           } catch (error) {
             clear(errorHost);
             errorHost.appendChild(alertBox(error.message, "danger"));
+          } finally {
+            trigger.setLoading(false);
           }
         } })],
     });
@@ -489,6 +609,7 @@ export default async function productsView(ctx) {
   /* Categories                                                             */
   /* --------------------------------------------------------------------- */
   function openCategories() {
+  if (!requireBranchAction()) return;
     const list = h("div", { class: "col gap-2" });
     const nameInput = textInput({ placeholder: "New category name" });
     const colorInput = h("input", { type: "color", value: COLORS[0] });

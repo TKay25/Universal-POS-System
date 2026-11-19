@@ -8,11 +8,9 @@ import {
   store, getSession, companyName, currentCompany, hasAny, moduleOn, moduleConfig, settings, preferences,
   applyBranding,
 } from "../core/store.js";
-import {
-  sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput, textarea, select,
+import { sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput, textarea, select,
   switchControl, switchRow, modal, confirmDialog, formGrid, moneyInput, tagInput, emptyState, statusBadge,
-  avatar, pagination, kvList, segmented,
-} from "../core/ui.js";
+  avatar, pagination, kvList, segmented, searchLoader } from "../core/ui.js";
 import { savePreferences, rememberPreference, posPreference } from "../core/prefs.js";
 
 export const SECTION_RENDERERS = {};
@@ -1778,7 +1776,7 @@ SECTION_RENDERERS.roles = async (host) => {
 SECTION_RENDERERS.audit = async (host) => {
   const tableHost = h("div");
   const filters = { q: "", page: 1 };
-  const search = textInput({ placeholder: "Search actions, people or notes…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search actions, people or notes…", className: "input--sm" }));
   search.addEventListener("input", debounce(() => { filters.q = search.value.trim(); filters.page = 1; load(); }, 250));
 
   async function load() {

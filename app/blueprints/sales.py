@@ -8,6 +8,7 @@ from flask import Blueprint, Response, jsonify, request
 
 from app.blueprints.helpers import get_scoped
 from app.extensions import db
+from app.services import cache
 from app.models import (
     Category,
     Customer,
@@ -59,6 +60,10 @@ bp = Blueprint("sales", __name__, url_prefix="/api")
 def pos_bootstrap():
     company = current_company()
     user = current_user()
+    cache_key = f"pos-bootstrap:{company.id}:{user.id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     pos_cfg = company.module_config("pos")
     show_out_of_stock = bool(company.settings.get("sales", {}).get("show_out_of_stock", True))
 
@@ -100,33 +105,33 @@ def pos_bootstrap():
         )
     }
 
-    return jsonify(
-        {
-            "products": [p.to_dict() for p in products],
-            "categories": [c.to_dict() for c in categories],
-            "departments": [d.to_dict() for d in departments],
-            "payment_methods": [m.to_dict() for m in methods],
-            "taxes": [t.to_dict() for t in taxes],
-            "held_carts": [h.to_dict() for h in held],
-            "shift": shift.to_dict() if shift else None,
-            "locations": [l.to_dict() for l in locations],
-            "registers": [r.to_dict() for r in registers],
-            "settings": {
-                "currency": company.settings.get("currency", {}),
-                "branding": company.settings.get("branding", {}),
-                "sales": company.settings.get("sales", {}),
-            },
-            "modules": {key: company.module_enabled(key) for key in module_config},
-            "config": module_config,
-            "cashier": user.to_dict(include_company=False),
-            "staff": [
-                u.to_dict(include_company=False)
-                for u in company.users
-                if u.status == "active"
-            ],
-            "delivery": {"tax_inclusive": bool(company.module_config("tax_engine").get("prices_include_tax"))},
-        }
-    )
+    payload = {
+        "products": [p.to_dict() for p in products],
+        "categories": [c.to_dict() for c in categories],
+        "departments": [d.to_dict() for d in departments],
+        "payment_methods": [m.to_dict() for m in methods],
+        "taxes": [t.to_dict() for t in taxes],
+        "held_carts": [h.to_dict() for h in held],
+        "shift": shift.to_dict() if shift else None,
+        "locations": [l.to_dict() for l in locations],
+        "registers": [r.to_dict() for r in registers],
+        "settings": {
+            "currency": company.settings.get("currency", {}),
+            "branding": company.settings.get("branding", {}),
+            "sales": company.settings.get("sales", {}),
+        },
+        "modules": {key: company.module_enabled(key) for key in module_config},
+        "config": module_config,
+        "cashier": user.to_dict(include_company=False),
+        "staff": [
+            u.to_dict(include_company=False)
+            for u in company.users
+            if u.status == "active"
+        ],
+        "delivery": {"tax_inclusive": bool(company.module_config("tax_engine").get("prices_include_tax"))},
+    }
+    cache.set(cache_key, payload, 60)
+    return jsonify(payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -193,8 +198,14 @@ def list_sales():
         query = query.filter(Sale.created_at >= start_utc, Sale.created_at <= end_utc)
     if request.args.get("mine") == "1":
         query = query.filter(Sale.user_id == user.id)
+    cashier_id = request.args.get("user_id", type=int)
+    if cashier_id and user.has_permission("sales.view_all"):
+        query = query.filter(Sale.user_id == cashier_id)
     if request.args.get("shift_id"):
         query = query.filter(Sale.shift_id == request.args.get("shift_id", type=int))
+    location_id = request.args.get("location_id", type=int)
+    if location_id:
+        query = query.filter(Sale.location_id == location_id)
 
     items, meta = paginate(query.order_by(Sale.created_at.desc()), default_per_page=25)
     return jsonify({"items": [s.to_dict() for s in items], "meta": meta})
@@ -375,11 +386,15 @@ def list_shifts():
     if not current_user().has_permission("reports.view"):
         query = query.filter(Shift.user_id == current_user().id)
     term = search_arg()
+    query = query.outerjoin(User, User.id == Shift.user_id).outerjoin(
+        Register, Register.id == Shift.register_id
+    )
     if term:
         like = f"%{term}%"
-        query = query.outerjoin(User, User.id == Shift.user_id).outerjoin(
-            Register, Register.id == Shift.register_id
-        ).filter(db.or_(User.full_name.ilike(like), Register.name.ilike(like)))
+        query = query.filter(db.or_(User.full_name.ilike(like), Register.name.ilike(like)))
+    location_id = request.args.get("location_id", type=int)
+    if location_id:
+        query = query.filter(Register.location_id == location_id)
     items, meta = paginate(query.order_by(Shift.opened_at.desc()), default_per_page=25)
     return jsonify({"items": [s.to_dict() for s in items], "meta": meta})
 

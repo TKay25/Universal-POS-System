@@ -5,11 +5,9 @@ import { icon } from "../core/icons.js";
 import { money, number, date, dateTime, isoDay, addDays } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import { store, getSession, isDeveloper, impersonating } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
+import { pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
   textarea, select, modal, confirmDialog, formGrid, statCard, statusBadge, avatar, pagination, emptyState,
-  menu, kvList, switchControl, moneyInput,
-} from "../core/ui.js";
+  menu, kvList, switchControl, moneyInput, searchLoader } from "../core/ui.js";
 import { areaChart } from "../core/charts.js";
 
 const SECTIONS = [
@@ -162,7 +160,7 @@ SECTIONS_MAP.overview = async (host) => {
 /* ------------------------------------------------------------------------- */
 SECTIONS_MAP.companies = async (host) => {
   const tableHost = h("div");
-  const search = textInput({ placeholder: "Search companies…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search companies…", className: "input--sm" }));
   let page = 1;
   const filters = { q: "", status: "" };
 
@@ -396,7 +394,7 @@ SECTIONS_MAP.companies = async (host) => {
 /* ------------------------------------------------------------------------- */
 SECTIONS_MAP.users = async (host) => {
   const tableHost = h("div");
-  const search = textInput({ placeholder: "Search people or emails…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search people or emails…", className: "input--sm" }));
   let page = 1;
   const filters = { q: "" };
 
@@ -612,7 +610,7 @@ SECTIONS_MAP.announcements = async (host) => {
 /* ------------------------------------------------------------------------- */
 SECTIONS_MAP.audit = async (host) => {
   const tableHost = h("div");
-  const search = textInput({ placeholder: "Search actions or people…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search actions or people…", className: "input--sm" }));
   let page = 1;
   const filters = { q: "" };
   search.addEventListener("input", debounce(() => { filters.q = search.value.trim(); page = 1; load(); }, 250));

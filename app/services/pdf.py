@@ -1071,6 +1071,37 @@ def render_summary_pdf(*, company, data, start_label, end_label, branch_name="")
 
     tables = []
 
+    comparison = data.get("comparison") or {}
+    if comparison.get("current"):
+        current = comparison["current"]
+        rows = [["Selected period", current.get("revenue_cents") or 0,
+                 current.get("profit_cents") or 0, None]]
+        previous = comparison.get("previous") or {}
+        if previous:
+            rows.append([previous.get("label") or "Previous period",
+                         previous.get("revenue_cents") or 0,
+                         previous.get("profit_cents") or 0,
+                         -previous.get("change_percent") if previous.get("change_percent") is not None else None])
+        for key in ("best", "worst"):
+            row = comparison.get(key) or {}
+            if row:
+                rows.append([
+                    f"{key.title()} {comparison.get('unit_label') or 'period'} · {row.get('label')}",
+                    row.get("revenue_cents") or 0,
+                    row.get("profit_cents") or 0,
+                    row.get("vs_current_percent"),
+                ])
+        tables.append({
+            "title": "How this period compares",
+            "columns": [
+                {"key": "period", "label": "Period", "type": "text", "weight": 2.1},
+                {"key": "revenue", "label": "Revenue", "type": "money", "weight": 1.1},
+                {"key": "profit", "label": "Profit", "type": "money", "weight": 1.1},
+                {"key": "change", "label": "vs selected", "type": "percent", "weight": 0.8},
+            ],
+            "rows": rows,
+        })
+
     branches = data.get("branches") or []
     if branches:
         tables.append({
@@ -1093,6 +1124,29 @@ def render_summary_pdf(*, company, data, start_label, end_label, branch_name="")
                     round((row.get("sales_cents") or 0) / sales_cents * 100, 1) if sales_cents else 0,
                 ]
                 for row in branches
+            ],
+        })
+
+    team = data.get("team") or []
+    if team:
+        tables.append({
+            "title": "Sales by user",
+            "columns": [
+                {"key": "user", "label": "User", "type": "text", "weight": 1.7},
+                {"key": "transactions", "label": "Sales", "type": "number", "weight": 0.6},
+                {"key": "revenue", "label": "Revenue", "type": "money", "weight": 1.1},
+                {"key": "profit", "label": "Profit", "type": "money", "weight": 1.1},
+                {"key": "share", "label": "Share", "type": "percent", "weight": 0.6},
+            ],
+            "rows": [
+                [
+                    row["name"],
+                    row.get("transactions") or 0,
+                    row.get("sales_cents") or 0,
+                    row.get("profit_cents") or 0,
+                    row.get("share_percent") or 0,
+                ]
+                for row in team
             ],
         })
 
@@ -1119,6 +1173,32 @@ def render_summary_pdf(*, company, data, start_label, end_label, branch_name="")
                 ]
                 for row in departments
             ],
+        })
+
+    top_products = data.get("top_products") or []
+    if top_products:
+        tables.append({
+            "title": "Top 3 products",
+            "columns": [
+                {"key": "product", "label": "Product", "type": "text", "weight": 1.8},
+                {"key": "qty", "label": "Units", "type": "number", "weight": 0.6},
+                {"key": "revenue", "label": "Revenue", "type": "money", "weight": 1.1},
+            ],
+            "rows": [[row.get("name"), row.get("qty") or 0, row.get("revenue_cents") or 0]
+                     for row in top_products[:3]],
+        })
+
+    least_products = data.get("least_products") or []
+    if least_products:
+        tables.append({
+            "title": "Watchlist · lowest 3",
+            "columns": [
+                {"key": "product", "label": "Product", "type": "text", "weight": 1.8},
+                {"key": "qty", "label": "Units", "type": "number", "weight": 0.6},
+                {"key": "revenue", "label": "Revenue", "type": "money", "weight": 1.1},
+            ],
+            "rows": [[row.get("name"), row.get("qty") or 0, row.get("revenue_cents") or 0]
+                     for row in least_products[:3]],
         })
 
     return render_report_pdf(

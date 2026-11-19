@@ -334,9 +334,16 @@ def _product_payload(company, *, partial: bool):
         "is_featured": {"type": "bool", "default": False},
         "custom_fields": {"type": "json", "default": {}},
     }
+    body = request.get_json(silent=True) or {}
     if partial:
         rules["name"]["required"] = False
-    payload = validate(request.get_json(silent=True) or {}, rules)
+        # A PATCH only touches what the client sent. Applying rule defaults to
+        # absent fields would silently wipe stock, cost, prices and colours.
+        rules = {key: value for key, value in rules.items() if key in body}
+    payload = validate(body, rules)
+    for nullable in ("category_id", "department_id", "tax_rate_id"):
+        if partial and nullable in body and body.get(nullable) in (None, ""):
+            payload[nullable] = None
 
     if "category_id" in payload and payload["category_id"]:
         category = get_scoped(Category, payload["category_id"], company.id)
@@ -351,6 +358,16 @@ def _product_payload(company, *, partial: bool):
     if "custom_fields" in payload:
         payload["custom_fields"] = _validate_custom_values(company, "product", payload["custom_fields"])
     return payload
+
+
+def _funding_payload() -> dict:
+    """Read the optional ``funding_source`` / ``funding_note`` pair from the body."""
+    from app.services import funding as funding_service
+
+    body = request.get_json(silent=True) or {}
+    source = funding_service.normalize(body.get("funding_source"))
+    note = str(body.get("funding_note") or "").strip()[:160]
+    return {"source": source, "note": note}
 
 
 def _ensure_unique_codes(company, *, sku: str = "", barcode: str = "", exclude_id: int | None = None):
@@ -384,12 +401,14 @@ def _ensure_unique_codes(company, *, sku: str = "", barcode: str = "", exclude_i
 def create_product():
     company = current_company()
     payload = _product_payload(company, partial=False)
+    funding = _funding_payload()
     _ensure_unique_codes(company, sku=payload.get("sku", ""), barcode=payload.get("barcode", ""))
     product = Product(company_id=company.id)
     for key, value in payload.items():
         setattr(product, key, value)
     db.session.add(product)
     db.session.flush()
+    movement = None
     if product.stock_qty:
         from app.services import fifo
 
@@ -397,16 +416,27 @@ def create_product():
             product, product.stock_qty, int(product.cost_cents or 0),
             source="opening", reference="initial stock",
         )
-        db.session.add(
-            StockMovement(
-                company_id=company.id,
-                product_id=product.id,
-                user_id=current_user().id,
-                qty_delta=product.stock_qty,
-                balance_after=product.stock_qty,
-                reason="opening",
-                reference="initial stock",
-            )
+        movement = StockMovement(
+            company_id=company.id,
+            product_id=product.id,
+            user_id=current_user().id,
+            qty_delta=product.stock_qty,
+            balance_after=product.stock_qty,
+            reason="opening",
+            reference="initial stock",
+        )
+        db.session.add(movement)
+        db.session.flush()
+        from app.services import funding as funding_service
+
+        funding_service.record(
+            company,
+            product=product,
+            source=funding["source"],
+            amount_cents=int(round(float(product.stock_qty) * int(product.cost_cents or 0))),
+            note=funding["note"] or "Opening stock",
+            movement=movement,
+            user=current_user(),
         )
     db.session.commit()
     audit("product.created", entity="product", entity_id=product.id,
@@ -451,24 +481,38 @@ def update_product(product_id: int):
         exclude_id=product.id,
     )
     manual_stock = "stock_qty" in payload
+    movement = None
     if manual_stock:
         new_qty = payload.pop("stock_qty")
         delta = float(new_qty) - float(product.stock_qty or 0)
         if delta:
             product.stock_qty = round(float(new_qty), 3)
-            db.session.add(
-                StockMovement(
-                    company_id=company.id,
-                    product_id=product.id,
-                    user_id=current_user().id,
-                    qty_delta=delta,
-                    balance_after=product.stock_qty,
-                    reason="correction",
-                    reference="edit form",
-                )
+            movement = StockMovement(
+                company_id=company.id,
+                product_id=product.id,
+                user_id=current_user().id,
+                qty_delta=delta,
+                balance_after=product.stock_qty,
+                reason="correction",
+                reference="edit form",
             )
+            db.session.add(movement)
     for key, value in payload.items():
         setattr(product, key, value)
+    if movement is not None and movement.qty_delta > 0 and product.track_stock:
+        funding = _funding_payload()
+        from app.services import funding as funding_service
+
+        db.session.flush()
+        funding_service.record(
+            company,
+            product=product,
+            source=funding["source"],
+            amount_cents=int(round(movement.qty_delta * int(product.cost_cents or 0))),
+            note=funding["note"] or "Stock added from the product form",
+            movement=movement,
+            user=current_user(),
+        )
     db.session.commit()
     audit("product.updated", entity="product", entity_id=product.id,
           summary=f"Updated {product.name}", commit=True)
@@ -520,6 +564,7 @@ def adjust_stock(product_id: int):
     cfg = company.module_config("inventory")
     if cfg.get("receive_reason_required", True) and payload["reason"] in {"receive", "wastage"} and not payload["note"]:
         raise bad_request("Add a short note for this movement.", {"note": "A note is required."})
+    funding = _funding_payload()
     supplier = None
     if payload["supplier_id"]:
         supplier = get_scoped(Supplier, payload["supplier_id"], company.id)
@@ -570,11 +615,28 @@ def adjust_stock(product_id: int):
         note=payload["note"],
     )
     db.session.add(movement)
+    db.session.flush()
+    funding_entry = None
+    if delta > 0:
+        from app.services import funding as funding_service
+
+        unit_cost = int(buying_price) if buying_price is not None else int(product.cost_cents or 0)
+        funding_entry = funding_service.record(
+            company,
+            product=product,
+            source=funding["source"],
+            amount_cents=int(round(delta * unit_cost)),
+            note=funding["note"],
+            movement=movement,
+            user=current_user(),
+        )
     db.session.commit()
     audit("stock.adjusted", entity="product", entity_id=product.id,
           summary=f"{product.name}: {delta:+g} ({payload['reason']})",
           meta={"delta": delta, "balance": product.stock_qty}, commit=True)
-    return jsonify({"item": product.to_dict(), "movement": movement.to_dict()})
+    movement_data = movement.to_dict()
+    movement_data["funding"] = funding_entry.to_dict() if funding_entry is not None else None
+    return jsonify({"item": product.to_dict(), "movement": movement_data})
 
 
 @bp.get("/stock-movements")
@@ -606,7 +668,16 @@ def stock_movements():
         start_utc, end_utc = local_range_bounds(start_day or end_day, end_day or start_day, company)
         query = query.filter(StockMovement.created_at >= start_utc, StockMovement.created_at <= end_utc)
     items, meta = paginate(query.order_by(StockMovement.created_at.desc()), default_per_page=50)
-    return jsonify({"items": [m.to_dict() for m in items], "meta": meta})
+    from app.services import funding as funding_service
+    from app.models import StockFunding  # noqa: F401 - ensures the table is registered
+
+    by_movement = funding_service.for_movements(company.id, [m.id for m in items])
+    rows = []
+    for movement in items:
+        data = movement.to_dict()
+        data["funding"] = by_movement.get(movement.id)
+        rows.append(data)
+    return jsonify({"items": rows, "meta": meta})
 
 
 @bp.get("/products-export.csv")
@@ -773,6 +844,17 @@ def _lookup_tax(company, raw: str):
         if abs(float(row.rate or 0) - rate) < 1e-6:
             return row
     return None
+
+
+@bp.get("/inventory/funding")
+@login_required
+@company_required
+@permission_required("inventory.manage")
+def inventory_funding():
+    """How the stock on the shelves was paid for: trading profit vs outside money."""
+    from app.services import funding as funding_service
+
+    return jsonify(funding_service.summary(current_company()))
 
 
 @bp.get("/inventory/template.csv")

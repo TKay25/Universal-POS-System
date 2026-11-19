@@ -5,10 +5,9 @@ import { icon } from "../core/icons.js";
 import { money, number, dateTime, date } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
 import { moduleConfig } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, table, badge, toast, alertBox, field, textarea, moneyInput,
-  statCard, modal, statusBadge, pagination, emptyState, kvList, textInput,
-} from "../core/ui.js";
+import { branchQuery, requireBranchAction } from "../core/branch.js";
+import { pageHeader, sectionCard, button, table, badge, toast, alertBox, field, textarea, moneyInput,
+  statCard, modal, statusBadge, pagination, emptyState, kvList, textInput, searchLoader } from "../core/ui.js";
 
 export default async function shiftsView(ctx) {
   const el = h("div");
@@ -20,7 +19,7 @@ export default async function shiftsView(ctx) {
   const currentHost = h("div");
   const historyHost = h("div");
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
-  const searchInput = textInput({ placeholder: "Search cashier or till…", className: "input--sm" });
+  const searchInput = searchLoader(textInput({ placeholder: "Search cashier or till…", className: "input--sm" }));
   searchInput.addEventListener("input", debounce(() => {
     state.search = searchInput.value.trim();
     page = 1;
@@ -45,7 +44,7 @@ export default async function shiftsView(ctx) {
     try {
       const [currentData, history] = await Promise.all([
         get("/shifts/current"),
-        get("/shifts", { page, per_page: 25, q: state.search || undefined }),
+        get("/shifts", { page, per_page: 25, q: state.search || undefined, ...branchQuery() }),
       ]);
       current = currentData.item;
       summary = currentData.summary || {};
@@ -119,6 +118,7 @@ export default async function shiftsView(ctx) {
   }
 
   function openOpenModal() {
+    if (!requireBranchAction()) return;
     const floatInput = moneyInput({ value: "0.00" });
     const notes = textarea({ rows: 2, placeholder: "Opening notes (optional)" });
     const errorHost = h("div");
@@ -143,6 +143,7 @@ export default async function shiftsView(ctx) {
   }
 
   function openCloseModal() {
+    if (!requireBranchAction()) return;
     if (!current) {
       toast("There is no open shift to close.", "warning");
       return;

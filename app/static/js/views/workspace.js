@@ -5,10 +5,8 @@ import { icon } from "../core/icons.js";
 import { dateTime, date, number } from "../core/fmt.js";
 import { get, post, patch, del, downloadFile } from "../core/http.js";
 import { hasPerm } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
-  textarea, select, switchControl, modal, confirmDialog, emptyState, statusBadge, pagination,
-} from "../core/ui.js";
+import { pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
+  textarea, select, switchControl, modal, confirmDialog, emptyState, statusBadge, pagination, searchLoader } from "../core/ui.js";
 
 export default async function workspaceView(ctx) {
   const id = Number(ctx.params.id);
@@ -18,7 +16,7 @@ export default async function workspaceView(ctx) {
   let workspace = null;
   let records = [];
 
-  const search = textInput({ placeholder: "Search records…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search records…", className: "input--sm" }));
   search.addEventListener("input", debounce(() => { filters.q = search.value.trim(); filters.page = 1; load(); }, 250));
 
   const headerHost = h("div");

@@ -62,8 +62,9 @@ Every company can have any number of **report recipients** — people who do not
 but receive a WhatsApp executive summary at **18:00 company time**. It covers today vs
 yesterday and the same weekday last week, week-to-date vs last week and the best week
 this year, month-to-date vs last month and the best month, year-to-date vs last year,
-top products, payment mix and management advice. Recipients are managed in
-**Settings → Report recipients**.
+top 3 products for today, this week and this month, a lowest-3 watchlist, payment mix,
+branch performance, **sales and profit for every team member today**, and management
+advice. Recipients are managed in **Settings → Report recipients**.
 
 WhatsApp Cloud API credentials live only in the server environment:
 
@@ -184,10 +185,14 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
 - **Branding & business details** — name, logo text/colour, theme, VAT registration number
   and company registration number (Zimbabwe), receipt templates.
 - **Branches & tills** — unlimited branches per company, multiple tills per branch. The POS
-  branch switcher records `location_id`/`register_id` on every sale and shift.
+  branch switcher records `location_id`/`register_id` on every sale and shift. The topbar
+  switcher is global: choose one branch for selling, or **All branches** for a combined,
+  read-only view of the dashboard, sales, reports and cash-drawer history. POS always
+  requires a concrete branch — it never sells into the aggregate.
 - **Departments → categories → products** — e.g. Electronics & Appliances → TVs / Audio /
   Solar; Hardware → Power Tools / DIY / Plumbing / Machinery. Department filters drive the
-  till grid.
+  till grid. Any product can be re-filed from the row menu (**Move to department /
+  category**) without touching its prices, stock or sales history.
 - **Roles & permissions** — the first user of a company becomes **Administrator**. Admins
   appoint staff, add/remove ordinary users, edit stock and settings. Administrators cannot
   remove other administrators; only platform staff can.
@@ -212,6 +217,10 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
 - **Buying price is asked for whenever stock comes in** — Receive stock and the Add side of
   Adjust stock both require it, and the API refuses a receipt without one. Inventory shows
   **Stock value (FIFO)** next to each product.
+- **Where the money came from** — every purchase also records its **funding source**:
+  *profits from sales* or *external funds* (owner capital, a loan, an investor). Inventory's
+  **Stock funding** card shows the split, the amount behind each source and the latest
+  purchases, so a manager can see how much of the shelf the business funded itself.
 - **Buying price vs selling price** are tracked separately on every product.
 - **Receive stock** supports existing products (updating buying/selling price) and new
   products with SKU, barcode, prices and opening stock. Name suggestions and duplicate
@@ -231,11 +240,18 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
 
 ## Reports & insights
 
-Dashboard quick insights compute 30-day revenue growth, profit leaders, slow movers,
-restock value, lay-by exposure and actionable management tips. The Reports tab ships
-sales, products, categories, payments, tax, cashiers, inventory valuation, **low stock**,
-stock movements, customers, refunds, cash drawer, lay-bys, branches and suppliers — with
-local date ranges and a branch filter.
+Dashboard quick insights compute revenue growth, top 3 products, lowest-3 watchlist,
+profit leaders, slow movers, restock value, branch performance, busiest hour, lay-by
+exposure and a broad list of management actions. The Reports tab ships sales, products,
+categories, payments, tax, cashiers, inventory valuation, **low stock**, stock movements,
+customers, refunds, cash drawer, lay-bys, branches and suppliers — with local date ranges,
+the global branch filter and a **user filter** that starts on *All users* and can be
+narrowed to one cashier. The summary shows **sales and profit by user** alongside the
+branch and department splits. Reports open on **Today** by default and show a comparison
+band: selected period vs the previous equivalent period, plus the best and worst day,
+week, month, quarter or year for that range. Sales has the same user filter (All users /
+Only me / a specific person), and the 6pm executive summary includes a *by team member*
+section for the day.
 
 ### PDF and CSV exports
 
@@ -270,6 +286,11 @@ screen title and the toolbar actions, so the local time stamped on receipts is a
 view. Department and category filters are **dropdowns** rather than chip rows, which keeps
 the catalog area clear no matter how many departments a company runs.
 
+Product tiles are **colour-coded by stock**: green while the shelf is healthy, amber at or
+below the product's reorder point, red (and unclickable) when it is out. **Held orders** are
+always one click away — from the toolbar, the cart header, or the empty cart — and the drawer
+shows each parked cart's lines and value so it can be resumed and charged later.
+
 ### Workspace ergonomics
 
 - **Collapsible sidebar** — on a PC the sidebar is an icon rail that expands when you hover
@@ -278,7 +299,7 @@ the catalog area clear no matter how many departments a company runs.
 - **Search everywhere** — Products, Sales, Customers, Lay-bys, Departments (departments and
   categories), Inventory (stock levels, movements by product/reference/reason, suppliers),
   Cash drawer (cashier/till), Activity log, Settings and every phone-app list all have a
-  search box.
+  search box. Typing shows an inline spinner in the box until the results land.
 - **Custom date ranges** — every period control also accepts an explicit window: Reports and
   Sales have From/To pickers next to the shortcuts, and the phone app adds a **Custom** chip
   with From/To dates that drives all of its tabs.

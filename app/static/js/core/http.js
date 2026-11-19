@@ -1,6 +1,7 @@
 /* Fetch wrapper: CSRF, JSON, structured errors, session recovery. */
 
 import { store } from "./store.js";
+import { branchScope } from "./branch.js";
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = "error", fields = {} } = {}) {
@@ -11,6 +12,8 @@ export class ApiError extends Error {
     this.fields = fields || {};
   }
 }
+
+const pendingGets = new Map();
 
 function buildQuery(query) {
   if (!query) return "";
@@ -32,6 +35,7 @@ async function refreshSession() {
     const data = await res.json().catch(() => ({}));
     if (data && data.csrf_token) {
       store.set({ csrf: data.csrf_token, session: data.authenticated ? data : null });
+      window.dispatchEvent(new CustomEvent("pos:session-refreshed", { detail: data }));
     }
     return data;
   })().finally(() => {
@@ -44,6 +48,7 @@ export async function api(path, { method = "GET", body, query, signal, raw = fal
   const headers = { Accept: raw ? "*/*" : "application/json" };
   const token = store.state.csrf;
   if (token) headers["X-CSRF-Token"] = token;
+  if (branchScope().all) headers["X-Branch-Scope"] = "all";
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   let response;
@@ -57,6 +62,7 @@ export async function api(path, { method = "GET", body, query, signal, raw = fal
     });
   } catch (error) {
     if (error.name === "AbortError") throw error;
+    if (method === "GET") window.dispatchEvent(new CustomEvent("pos:fetch-settled"));
     throw new ApiError("The server is unreachable. Check your connection and try again.", {
       status: 0,
       code: "network",
@@ -87,16 +93,27 @@ export async function api(path, { method = "GET", body, query, signal, raw = fal
       store.set({ session: null });
       window.dispatchEvent(new CustomEvent("pos:signed-out"));
     }
+    if (method === "GET") window.dispatchEvent(new CustomEvent("pos:fetch-settled"));
     throw new ApiError(error.message || `Request failed (${response.status}).`, {
       status: response.status,
       code: error.code || "error",
       fields: error.fields || {},
     });
   }
+  if (method === "GET") window.dispatchEvent(new CustomEvent("pos:fetch-settled"));
   return payload;
 }
 
-export const get = (path, query, options = {}) => api(path, { query, ...options });
+export const get = (path, query, options = {}) => {
+  if (options.signal) return api(path, { query, ...options });
+  const key = `${path}${buildQuery(query)}`;
+  const pending = pendingGets.get(key);
+  if (pending) return pending;
+  const request = api(path, { query, ...options }).finally(() => pendingGets.delete(key));
+  pendingGets.set(key, request);
+  return request;
+};
+
 export const post = (path, body, options = {}) => api(path, { method: "POST", body, ...options });
 export const patch = (path, body, options = {}) => api(path, { method: "PATCH", body, ...options });
 export const del = (path, options = {}) => api(path, { method: "DELETE", ...options });

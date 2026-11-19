@@ -109,7 +109,10 @@ def test_executive_summary_contains_periods_and_advice(client, owner):
     assert "THIS YEAR" in text
     assert "MANAGEMENT ADVICE" in text
     assert "Espresso" in text
+    assert "BY TEAM MEMBER" in text
+    assert "Tariro Moyo" in text or "Test Owner" in text
     assert report["metrics"]["today"]["sales_cents"] > 0
+    assert report["team"] and report["team"][0]["sales_cents"] > 0
     assert report["advice"]
 
 

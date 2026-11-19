@@ -95,5 +95,13 @@ export function createRouter({ routes, views, canOpen, onDenied }) {
     go(hashPath(), { silent: true });
   }
 
-  return { go, start, currentPath: hashPath };
+  function refresh() {
+    const current = tabs.current();
+    if (!current) return go(hashPath(), { silent: true });
+    const path = current.path;
+    tabs.close(current.id, { force: true });
+    return go(path, { silent: true });
+  }
+
+  return { go, start, refresh, currentPath: hashPath };
 }

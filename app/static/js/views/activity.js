@@ -4,10 +4,8 @@ import { h, clear } from "../core/dom.js";
 import { icon } from "../core/icons.js";
 import { dateTime } from "../core/fmt.js";
 import { get } from "../core/http.js";
-import {
-  pageHeader, sectionCard, button, table, badge, alertBox, loadingBlock,
-  pagination, drawer, select, kvList, subtleLabel,
-} from "../core/ui.js";
+import { pageHeader, sectionCard, button, table, badge, alertBox, loadingBlock,
+  pagination, drawer, select, kvList, subtleLabel, searchLoader } from "../core/ui.js";
 import { withButtonSpinner } from "../core/loading.js";
 
 const AREA_TONES = {
@@ -46,7 +44,7 @@ export default async function activityView(ctx) {
   let facets = { areas: [], entities: [], actors: [] };
 
   const content = h("div");
-  const searchInput = h("input", { class: "input", placeholder: "Search action, detail or person…", style: { minWidth: "220px" } });
+  const searchInput = searchLoader(h("input", { class: "input", placeholder: "Search action, detail or person…", style: { minWidth: "220px" } }));
   const areaHost = h("div");
   const actorHost = h("div");
   const fromInput = h("input", { class: "input input--sm", type: "date", style: { width: "150px" } });

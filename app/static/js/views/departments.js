@@ -5,10 +5,9 @@ import { icon } from "../core/icons.js";
 import { number, dateTime } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import { hasPerm, moduleOn } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, badge, toast, alertBox, field, textInput, textarea,
-  select, switchControl, modal, confirmDialog, emptyState, statCard, menu, formGrid,
-} from "../core/ui.js";
+import { requireBranchAction } from "../core/branch.js";
+import { pageHeader, sectionCard, button, iconButton, badge, toast, alertBox, field, textInput, textarea,
+  select, switchControl, modal, confirmDialog, emptyState, statCard, menu, formGrid, searchLoader } from "../core/ui.js";
 
 const COLORS = ["#5b5bd6", "#b45309", "#d97706", "#0f766e", "#4338ca", "#b91c1c", "#c2410c", "#0891b2", "#7c3aed"];
 const ICONS = ["layers", "box", "wrench", "truck", "grid", "sparkles", "tag", "cash", "building", "percent"];
@@ -22,7 +21,7 @@ export default async function departmentsView(ctx) {
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
   const cardsHost = h("div", { class: "grid grid--3" });
 
-  const searchInput = textInput({ placeholder: "Search departments or categories…", className: "input--sm" });
+  const searchInput = searchLoader(textInput({ placeholder: "Search departments or categories…", className: "input--sm" }));
   searchInput.addEventListener("input", () => {
     term = searchInput.value.trim().toLowerCase();
     renderCards();
@@ -182,6 +181,7 @@ export default async function departmentsView(ctx) {
   }
 
   function openDepartmentForm(department = null) {
+  if (!requireBranchAction()) return;
     const name = textInput({ value: department?.name || "", placeholder: "e.g. Hardware" });
     const description = textInput({ value: department?.description || "", placeholder: "What belongs here?" });
     let color = department?.color || COLORS[departments.length % COLORS.length];
@@ -262,6 +262,7 @@ export default async function departmentsView(ctx) {
   }
 
   function openCategoryForm(category = null, department = null) {
+  if (!requireBranchAction()) return;
     const name = textInput({ value: category?.name || "", placeholder: "e.g. TVs" });
     let color = category?.color || department?.color || COLORS[0];
     const colorHost = h("div", { class: "thumbs" });

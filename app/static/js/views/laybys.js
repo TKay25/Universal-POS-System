@@ -5,11 +5,10 @@ import { icon } from "../core/icons.js";
 import { money, number, qty as fmtQty, date, dateTime, isoDay, addDays } from "../core/fmt.js";
 import { get, post, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig, settings } from "../core/store.js";
-import {
-  pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
+import { requireBranchAction } from "../core/branch.js";
+import { pageHeader, sectionCard, button, iconButton, table, badge, toast, alertBox, field, textInput,
   textarea, select, moneyInput, modal, drawer, confirmDialog, emptyState, statCard, statusBadge,
-  pagination, kvList, formGrid, switchControl,
-} from "../core/ui.js";
+  pagination, kvList, formGrid, switchControl, searchLoader } from "../core/ui.js";
 import { busyOverlay, withButtonSpinner } from "../core/loading.js";
 import { printReceipt } from "./saleDetail.js";
 
@@ -23,7 +22,7 @@ export default async function laybysView(ctx) {
   const tableHost = h("div");
   const chipsHost = h("div", { class: "chips" });
 
-  const search = textInput({ placeholder: "Search lay-by number, customer or phone…", className: "input--sm" });
+  const search = searchLoader(textInput({ placeholder: "Search lay-by number, customer or phone…", className: "input--sm" }));
   search.addEventListener("input", debounce(() => {
     filters.q = search.value.trim();
     filters.page = 1;
@@ -188,6 +187,7 @@ export default async function laybysView(ctx) {
   }
 
   async function openCreate() {
+    if (!requireBranchAction()) return;
     let products = [];
     let customers = [];
     try {
@@ -442,6 +442,7 @@ export default async function laybysView(ctx) {
     render();
 
     async function openPayment(id) {
+      if (!requireBranchAction()) return;
       let detail = layby;
       if (id !== layby.id) {
         try {
