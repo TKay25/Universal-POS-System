@@ -477,6 +477,26 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     const out = all.filter((row) => Number(row[3]) <= 0).length;
     const canExport = hasPerm("reports.export");
 
+    const summary = data.summary;
+    if (summary && summary.products) {
+      const margin = summary.retail_cents ? (summary.profit_cents / summary.retail_cents) * 100 : 0;
+      body.appendChild(h("section", { class: "mcard" },
+        h("div", { class: "mcard__head" },
+          h("div", { class: "mcard__title" }, "Stock value"),
+          h("span", { class: "mcard__hint" },
+            `${number(summary.products, 0)} tracked · ${margin.toFixed(1)}% margin`)),
+        h("div", { class: "mstats" },
+          h("div", { class: "mstat" },
+            h("span", { class: "mstat__label" }, "At cost"),
+            h("span", { class: "mstat__value" }, money(summary.cost_cents))),
+          h("div", { class: "mstat" },
+            h("span", { class: "mstat__label" }, "Expected sales"),
+            h("span", { class: "mstat__value" }, money(summary.retail_cents))),
+          h("div", { class: "mstat is-good" },
+            h("span", { class: "mstat__label" }, "Expected profit"),
+            h("span", { class: "mstat__value" }, money(summary.profit_cents))))));
+    }
+
     const search = searchLoader(h("input", { class: "input", placeholder: "Search product, SKU or department…", value: state.stockSearch }));
     search.addEventListener("input", () => {
       state.stockSearch = search.value.trim();

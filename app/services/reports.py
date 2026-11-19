@@ -1059,7 +1059,8 @@ def report_cashiers(company, start, end, location_id=None, user_id=None):
     return rows
 
 
-def report_inventory(company, start, end, location_id=None, user_id=None):
+def _inventory_rows(company):
+    """Tracked products with their stock value at cost and retail price."""
     from app.services import fifo
 
     products = (
@@ -1083,6 +1084,25 @@ def report_inventory(company, start, end, location_id=None, user_id=None):
             value,
         ])
     return rows
+
+
+def report_inventory(company, start, end, location_id=None, user_id=None):
+    return _inventory_rows(company)
+
+
+def stock_valuation(company) -> dict:
+    """What the shelves are worth today: at cost, at retail and the margin between."""
+    rows = _inventory_rows(company)
+    cost_cents = sum(int(row[6] or 0) for row in rows)
+    retail_cents = sum(
+        int(round(max(0.0, float(row[2] or 0)) * int(row[5] or 0))) for row in rows
+    )
+    return {
+        "products": len(rows),
+        "cost_cents": cost_cents,
+        "retail_cents": retail_cents,
+        "profit_cents": retail_cents - cost_cents,
+    }
 
 
 def report_low_stock(company, start, end, location_id=None, user_id=None):

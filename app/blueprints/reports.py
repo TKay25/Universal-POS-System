@@ -14,6 +14,7 @@ from app.services.reports import (
     period_comparison,
     public_registry,
     report_csv,
+    stock_valuation,
     today_dashboard,
 )
 from app.utils import date_range
@@ -22,6 +23,9 @@ bp = Blueprint("reports", __name__, url_prefix="/api/reports")
 
 SALES_REPORTS = {"sales", "products", "categories", "payments", "tax", "cashiers", "branches"}
 PDF_ROW_LIMIT = 1200
+
+# Extra context a report can carry next to its rows (the phone stock tab reads it).
+SUMMARY_BUILDERS = {"low_stock": stock_valuation, "inventory": stock_valuation}
 
 # What the phone dashboard offers. Kept short on purpose: downloadable, nothing else.
 MOBILE_DOWNLOADS = (
@@ -205,16 +209,18 @@ def run_report(key: str):
     definition, rows = build_report(company, key, start, end, location_id=location_id, user_id=user_id)
     if definition is None:
         not_found("Unknown report.")
-    return jsonify(
-        {
-            "key": key,
-            "name": definition["name"],
-            "description": definition["description"],
-            "columns": definition["columns"],
-            "rows": rows,
-            "range": {"from": start.isoformat(), "to": end.isoformat()},
-        }
-    )
+    payload = {
+        "key": key,
+        "name": definition["name"],
+        "description": definition["description"],
+        "columns": definition["columns"],
+        "rows": rows,
+        "range": {"from": start.isoformat(), "to": end.isoformat()},
+    }
+    summary = SUMMARY_BUILDERS.get(key)
+    if summary is not None:
+        payload["summary"] = summary(company)
+    return jsonify(payload)
 
 
 @bp.get("/<key>.csv")

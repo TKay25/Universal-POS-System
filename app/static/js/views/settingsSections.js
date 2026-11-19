@@ -319,12 +319,8 @@ SECTION_RENDERERS.general = async (host) => {
         field({ label: "Legal / trading name", control: legalName }),
         field({ label: "VAT registration number", control: taxNumber, hint: "ZIMRA VAT number, printed on receipts" }),
         field({ label: "Company registration number", control: companyRegNumber, hint: "Registrar of Companies number" }),
-        formGrid([
-          field({ label: "Phone", control: phone }),
-          field({ label: "WhatsApp", control: whatsapp, required: !isEdit,
-            hint: "Used for the 6pm executive summary." }),
-        ]),
-        field({ label: "WhatsApp number", control: whatsapp, hint: "For the 6pm executive summary. Include the country code." }),
+        field({ label: "Phone", control: phone }),
+        field({ label: "WhatsApp", control: whatsapp, hint: "For the 6pm executive summary. Include the country code." }),
         field({ label: "Email", control: email }),
         field({ label: "Website", control: website }),
         field({ label: "City", control: city }),
@@ -1301,7 +1297,7 @@ SECTION_RENDERERS.locations = async (host) => {
     const name = textInput({ value: branch?.name || "", placeholder: "e.g. Avondale Branch" });
     const code = textInput({ value: branch?.code || "", placeholder: "AVN" });
     const address = textInput({ value: branch?.address || "", placeholder: "Address" });
-    const phone = textInput({ value: branch?.phone || "", placeholder: "+263 77 123 4567" });
+    const phone = textInput({ value: branch?.phone || "", placeholder: "+263 24 270 0000" });
     const isDefault = switchControl({ checked: Boolean(branch?.is_default), label: "Default branch for new sales" });
     const isActive = switchControl({ checked: branch ? branch.is_active : true, label: "Open for trading" });
     const errorHost = h("div");
@@ -1311,12 +1307,7 @@ SECTION_RENDERERS.locations = async (host) => {
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
         formGrid([field({ label: "Branch name", control: name, required: true }), field({ label: "Code", control: code })]),
-        field({ label: "Address", control: address }),
-        formGrid([
-          field({ label: "Phone", control: phone }),
-          field({ label: "WhatsApp", control: whatsapp, required: !isEdit,
-            hint: "Used for the 6pm executive summary." }),
-        ]),
+        formGrid([field({ label: "Address", control: address }), field({ label: "Phone", control: phone })]),
         isDefault, isActive),
       footer: [button("Cancel", { onClick: () => instance.close() }), button(branch ? "Save branch" : "Add branch", { variant: "primary", onClick: async () => {
         try {
