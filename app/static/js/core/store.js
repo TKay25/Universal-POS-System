@@ -94,11 +94,22 @@ export function applyBranding() {
   root.style.setProperty("--radius-lg", `${Math.round(radius * 1.4)}px`);
   root.dataset.density = density;
   root.dataset.theme = branding.theme === "dark" ? "dark" : "light";
+  syncThemeColor();
 
   const logoText = branding.logo_text || session?.company?.name || "";
   root.title = logoText ? `${logoText} · Universal POS` : "Universal POS";
 }
 
+/* The installed app paints its status/title bar from this meta tag. */
+function syncThemeColor() {
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) return;
+  const surface = getComputedStyle(document.documentElement).getPropertyValue("--surface").trim();
+  const dark = document.documentElement.dataset.theme === "dark";
+  meta.setAttribute("content", surface || (dark ? "#111624" : "#ffffff"));
+}
+
 export function setTheme(mode) {
   document.documentElement.dataset.theme = mode === "dark" ? "dark" : "light";
+  syncThemeColor();
 }

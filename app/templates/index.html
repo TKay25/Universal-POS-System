@@ -2,10 +2,19 @@
 <html lang="en" data-theme="light">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Universal POS — a fully customisable cloud point of sale for every business.">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="application-name" content="Universal POS">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Universal POS">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>Universal POS</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%235b5bd6'/%3E%3Cpath d='M18 44V26h28v18' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3Cpath d='M25 26v-7h14v7' fill='none' stroke='white' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="manifest" href="{{ url_for('pwa_manifest') }}">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%235b5bd6'/%3E%3Cpath d='M24 25v-1a8 8 0 0 1 16 0v1' fill='none' stroke='white' stroke-width='4.5' stroke-linecap='round'/%3E%3Crect x='18' y='24' width='28' height='26' rx='5' fill='white'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/favicon-32.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>

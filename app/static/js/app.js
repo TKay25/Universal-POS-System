@@ -10,6 +10,7 @@ import {
 import { api, get, post } from "./core/http.js";
 import { tabs } from "./core/tabs.js";
 import { createRouter } from "./core/router.js";
+import { initPwa, installApp, isStandalone } from "./core/pwa.js";
 import {
   button, iconButton, avatar, modal, drawer, toast, menu, field, textInput, switchRow,
   alertBox, sectionCard, badge,
@@ -310,13 +311,25 @@ async function boot() {
     const session = await get("/auth/session", undefined, { retry: false });
     store.set({ session: session.authenticated ? session : null, csrf: session.csrf_token, ready: true });
   } catch (error) {
-    mount(root, h("div", { class: "auth" }, h("div", { class: "auth__panel" },
-      alertBox(error.message || "Could not reach the server.", "danger"))));
+    renderBootError(error);
     return;
   }
 
   if (isAuthed()) renderShell();
   else renderAuth();
+}
+
+/* The installed app opens from its cache, so the first thing a user sees
+   offline is this retry instead of the browser's error page. */
+function renderBootError(error) {
+  const root = document.getElementById("root");
+  mount(root, h("div", { class: "auth" }, h("div", { class: "auth__panel" },
+    h("div", { class: "col gap-3" },
+      alertBox(navigator.onLine
+        ? error.message || "Could not reach the server."
+        : "You are offline. Universal POS reconnects as soon as your device is back online.", "danger"),
+      button("Try again", { variant: "primary", block: true, icon: "refresh", onClick: () => boot() })))));
+  window.addEventListener("online", () => boot(), { once: true });
 }
 
 function renderAuth(message = "") {
@@ -696,6 +709,10 @@ function openUserMenu(anchor) {
     items.push("-");
     items.push({ label: "Phone dashboard", icon: "grid", onClick: () => { setFullAppPreferred(false); renderShell(); } });
   }
+  if (!isStandalone()) {
+    items.push("-");
+    items.push({ label: "Install app", icon: "download", onClick: () => installApp() });
+  }
   items.push("-");
   items.push({ label: "Sign out", icon: "logout", danger: true, onClick: signOut });
   menu(anchor, items);
@@ -912,4 +929,5 @@ window.addEventListener("pos:branding-changed", () => {
 })();
 
 window.addEventListener("DOMContentLoaded", boot);
+initPwa();
 window.posApp = { remountShell, store };

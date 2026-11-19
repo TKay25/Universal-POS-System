@@ -54,6 +54,11 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     ):
         app.register_blueprint(blueprint)
 
+    # ---- installable app --------------------------------------------------- #
+    from app.pwa import init_pwa
+
+    init_pwa(app)
+
     # ---- cross cutting ---------------------------------------------------- #
     from app.security import ApiError, csrf_protect
 

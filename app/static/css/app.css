@@ -913,12 +913,19 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   display: grid;
   place-items: center;
   padding: 22px;
+  overflow: hidden;
+  overscroll-behavior: contain;
   animation: fadein 140ms ease;
 }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+/* The page behind an open dialog never scrolls; only the dialog body does. */
+html[data-overlay] .auth { overflow: hidden; }
+
 .modal {
   width: min(560px, 100%);
-  max-height: calc(100vh - 60px);
+  max-height: calc(100vh - 44px);
+  max-height: calc(100dvh - 44px);
   display: flex;
   flex-direction: column;
   background: var(--surface);
@@ -933,16 +940,17 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .modal--md { width: min(560px, 100%); }
 .modal--lg { width: min(820px, 100%); }
 .modal--xl { width: min(1080px, 100%); }
-.modal__head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.modal__head { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); flex: 0 0 auto; }
 .modal__title { font-size: 15.5px; font-weight: 650; letter-spacing: -.02em; }
 .modal__sub { font-size: 12.4px; color: var(--text-2); margin-top: 2px; }
 .modal__close { margin-left: auto; }
-.modal__body { padding: 18px; overflow: auto; }
+.modal__body { padding: 18px; overflow: auto; min-height: 0; overscroll-behavior: contain; }
 .modal__foot {
   display: flex; align-items: center; gap: 8px; justify-content: flex-end;
   padding: 13px 18px;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
+  flex: 0 0 auto;
 }
 .modal__foot .left { margin-right: auto; }
 
@@ -959,9 +967,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 }
 .drawer--lg { width: min(680px, 100%); }
 @keyframes drawerin { from { transform: translateX(28px); opacity: .6; } to { transform: none; opacity: 1; } }
-.drawer__head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; }
-.drawer__body { flex: 1; overflow: auto; padding: 18px; }
-.drawer__foot { padding: 13px 18px; border-top: 1px solid var(--border); background: var(--surface-2); display: flex; gap: 8px; justify-content: flex-end; }
+.drawer__head { padding: 16px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; gap: 12px; flex: 0 0 auto; }
+.drawer__body { flex: 1; overflow: auto; padding: 18px; min-height: 0; overscroll-behavior: contain; }
+.drawer__foot { padding: 13px 18px; border-top: 1px solid var(--border); background: var(--surface-2); display: flex; gap: 8px; justify-content: flex-end; flex: 0 0 auto; }
 
 /* ---------- toast --------------------------------------------------------- */
 .toasts {
@@ -1292,12 +1300,14 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 
 /* ---------- login --------------------------------------------------------- */
 .auth {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
   display: grid;
   grid-template-columns: 1.05fr .95fr;
   background: var(--bg);
   background-image: var(--bg-glow);
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 .auth__art {
   position: relative;
@@ -1333,8 +1343,6 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .auth__sub { color: var(--text-2); font-size: 13.3px; margin-top: 4px; }
 .auth__tabs { margin: 20px 0 18px; }
 .auth__demo { margin-top: 20px; padding: 12px; border-radius: 11px; border: 1px dashed var(--border-strong); background: var(--surface-2); }
-.auth__demo-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
-.auth__demo-row code { font-family: var(--mono); font-size: 11.4px; color: var(--text-2); }
 .auth__error {
   display: flex; gap: 8px; align-items: flex-start;
   padding: 10px 12px; border-radius: 10px;
@@ -2506,13 +2514,6 @@ body { letter-spacing: -.003em; }
 }
 .auth__title { font-size: 24px; letter-spacing: -.032em; }
 .auth__demo { border-style: solid; border-color: var(--hairline); border-radius: 14px; background: var(--surface-2); padding: 12px 14px; }
-.auth__demo-row {
-  padding: 7px 6px;
-  border-radius: 9px;
-  transition: background var(--speed);
-}
-.auth__demo-row:hover { background: var(--surface); }
-.auth__demo-row + .auth__demo-row { border-top: 1px solid var(--hairline); }
 
 /* ---------- layout rhythm ------------------------------------------------ */
 .grid { gap: 16px; }
@@ -2574,31 +2575,102 @@ textarea.input, .textarea { border-radius: 12px; }
 .pay-method { border-radius: 12px; }
 
 /* ---------- login refinements -------------------------------------------- */
-.auth__card { width: min(452px, 100%); padding: 26px 26px 22px; }
-.auth__tabs { margin: 16px 0 14px; }
-.auth__demo { margin-top: 16px; padding: 10px 12px; }
-.auth__demo-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  column-gap: 10px;
-  row-gap: 1px;
-  padding: 7px 8px;
+.auth__card {
+  width: min(452px, 100%);
+  padding: 24px 26px 20px;
+  /* The whole screen fits the window; the card only scrolls on a very short one. */
+  max-height: calc(100vh - 36px);
+  max-height: calc(100dvh - 36px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
-.auth__demo-row > span:first-child { grid-column: 1; grid-row: 1; min-width: 0; }
-.auth__demo-row > span:first-child strong { font-size: 12.3px; }
-.auth__demo-row code {
-  grid-column: 1;
-  grid-row: 2;
-  font-size: 11px;
+.auth__panel { min-height: 0; }
+.auth__art { min-height: 0; }
+.auth__tabs { margin: 14px 0 12px; }
+.auth__demo { margin-top: 14px; padding: 10px 12px; }
+.auth__demo-head {
+  font-size: 10.4px;
+  font-weight: 660;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+.auth__demo-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.auth__demo-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--speed), background var(--speed);
+}
+.auth__demo-chip:hover {
+  border-color: color-mix(in srgb, var(--primary) 42%, var(--hairline));
+  background: color-mix(in srgb, var(--primary) 6%, var(--surface));
+}
+.auth__demo-chip:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.auth__demo-name { font-size: 11.9px; font-weight: 640; line-height: 1.3; }
+.auth__demo-mail {
+  max-width: 100%;
+  font-family: var(--mono);
+  font-size: 10.2px;
+  line-height: 1.3;
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.auth__demo-row > button { grid-column: 2; grid-row: 1 / span 2; }
-.auth__demo-row + .auth__demo-row { border-top: 1px solid var(--hairline); }
 .auth__points { border-top: 1px solid rgba(255, 255, 255, .1); padding-top: 18px; }
+.auth__install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.auth__install > span { max-width: 62%; line-height: 1.35; }
+
+/* Phones: the card owns the screen, so tighten it and drop the install hint. */
+@media (max-width: 900px) {
+  .auth__panel { padding: 12px; }
+  .auth__card { padding: 18px 18px 14px; border-radius: 18px; }
+  .auth__title { font-size: 21px; }
+  .auth__tabs { margin: 10px 0 8px; }
+  .auth .field { gap: 4px; }
+  .auth__install { justify-content: flex-end; margin-top: 10px; padding-top: 8px; }
+  .auth__install > span { display: none; }
+  .auth__card > p.tiny { font-size: 10.6px; line-height: 1.35; }
+}
+
+/* Shorter windows: keep the marketing column and the card inside the viewport. */
+@media (max-height: 900px) {
+  .auth__art { padding: 34px 44px; gap: 18px; }
+  .auth__headline { font-size: clamp(26px, 2.9vw, 36px); }
+  .auth__lead { font-size: 13.6px; line-height: 1.56; }
+  .auth__points { gap: 10px; padding-top: 14px; }
+  .auth__point { font-size: 12.8px; }
+}
+@media (max-height: 760px) {
+  .auth__art { padding: 26px 38px; gap: 14px; }
+  .auth__lead { display: none; }
+  .auth__points { gap: 8px; padding-top: 12px; }
+  .auth__point { font-size: 12.2px; }
+  .auth__panel { padding: 16px 22px; }
+  .auth__title { font-size: 21px; }
+}
+
+/* Numbered "add to home screen" instructions in the install dialog. */
+.install-steps { margin: 0; padding-left: 20px; list-style: decimal; display: flex; flex-direction: column; gap: 7px; }
+.install-steps li { font-size: 13px; line-height: 1.45; padding-left: 2px; }
 
 /* Long labels never push a mobile card wider than the screen. */
 .mtable__head span, .mtable__row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

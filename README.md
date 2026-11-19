@@ -274,6 +274,35 @@ the selected period; tabs a role cannot see are hidden.
   menu returns. With the opt-out active on a small screen the sidebar becomes an off-canvas
   drawer behind a hamburger button, so nothing is unreachable.
 
+## Installable app (PWA)
+
+Universal POS is a progressive web app: install it from the browser and it gets its own
+icon, a full-screen window and a cached shell that opens without a connection.
+
+- **Manifest** — `/manifest.webmanifest` declares `display: standalone`, `start_url` and
+  scope `/`, brand `theme_color`/`background_color`, 192/512 icons (plain and maskable)
+  and shortcuts for the till, sales and reports. Served from the site root so the worker
+  keeps root scope.
+- **Service worker** — `/sw.js` (`app/static/sw.js`, served with
+  `Service-Worker-Allowed: /` and `Cache-Control: no-cache`, so a release reaches clients
+  immediately). It precaches the shell and then uses network-first with a cache fallback,
+  which keeps development free of stale assets while the app still opens offline.
+- **Tenant data is never cached** — every `/api/` request bypasses the worker, so sales,
+  tickets and customer records only ever come from the server. Losing the connection shows
+  the offline panel with **Try again** (and an automatic retry on `online`) instead of a
+  browser error page.
+- **Install entry points** — the account menu (desktop and phone shells) and the sign-in
+  card carry an **Install app** action. Where the browser offers `beforeinstallprompt` it
+  opens the native flow; otherwise it explains the platform's manual steps (iOS
+  Share → *Add to Home Screen*, Android menu → *Install app*, desktop address-bar icon).
+- **Branding follows the theme** — `<meta name="theme-color">` is rewritten on every theme
+  or branding change so the installed window's title bar matches the app surface.
+- Icons live in `app/static/icons/` (`icon-192`, `icon-512`, `icon-maskable-*`,
+  `apple-touch-icon.png`, `favicon-32.png`); `apple-touch-icon` and the Apple meta tags
+  cover iOS home-screen installs.
+- Requires HTTPS in production (Render terminates TLS) or `localhost`/`127.0.0.1` locally,
+  which browsers treat as secure contexts.
+
 ## Developer console
 
 `/developer` (or the Developer console nav) provides platform overview metrics, company
@@ -287,16 +316,18 @@ staff must *enter* a workspace to act inside it and never inherit tenant admin r
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 
-53 tests cover pricing, auth/RBAC, checkout/refund/void, lay-by lifecycle, duplicate
+68 tests cover pricing, auth/RBAC, checkout/refund/void, lay-by lifecycle, duplicate
 guards, branch attribution, bulk import/count, insights, low-stock and phone-app feeds,
 summary/branch/department breakdowns, activity log, movement/shift search, database URL
-normalisation, model constructors, PDF exports and developer flows.
+normalisation, model constructors, PDF exports, developer flows and the installable-app
+endpoints (manifest contents, icon sizes, worker headers, offline shell).
 
 ## Layout
 
 ```
 app/
   __init__.py        app factory, CLI, SPA fallback
+  pwa.py             manifest, service worker and offline-shell routes
   dbhelper.py        pooled-connection helpers: raw SQL, bulk inserts, retries, pool stats
   models.py          tenant-scoped data model (typed `Base` declarative class)
   modules.py         module catalogue + config schemas
@@ -304,8 +335,10 @@ app/
   security.py        CSRF, sessions, RBAC decorators, audit
   services/          pricing, fifo, checkout, laybys, receipt, reports, pdf, cache, timezones, provisioning
   blueprints/        auth, activity, company, catalog, sales, laybys, reports, developer, workspaces
+  templates/         index.html shell + offline.html
   static/css/app.css design system + app-like layout
-  static/js/         core framework + views
+  static/js/         core framework (incl. core/pwa.js) + views
+  static/manifest.webmanifest, static/sw.js, static/icons/   installable-app assets
   seed.py            demo workspaces
 tests/               pytest suite
 run.py               dev entry point

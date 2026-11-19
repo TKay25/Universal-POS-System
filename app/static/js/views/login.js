@@ -5,6 +5,7 @@ import { icon } from "../core/icons.js";
 import { store, applyBranding } from "../core/store.js";
 import { post } from "../core/http.js";
 import { button, field, textInput, select, alertBox, segmented } from "../core/ui.js";
+import { installApp, isStandalone } from "../core/pwa.js";
 
 const CURRENCIES = [
   { value: "USD|$", label: "US Dollar ($)" },
@@ -20,7 +21,8 @@ const CURRENCIES = [
 ];
 
 function formGrid2(children) {
-  return h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "14px" } }, children);
+  // h() applies style objects with setProperty, so properties must stay kebab-case.
+  return h("div", { style: { display: "grid", "grid-template-columns": "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" } }, children);
 }
 
 export default function loginView({ onAuthed, initialError = "" } = {}) {
@@ -87,25 +89,26 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
     submit);
 
     const demo = h("div", { class: "auth__demo" },
-      h("div", { class: "tiny dim strong", style: { textTransform: "uppercase", letterSpacing: ".09em" } }, "Demo accounts"),
-      demoRow("Platform developer", "developer@universalpos.dev", "DevAdmin!2024", { role: "Developer" }),
-      demoRow("Coffee shop owner", "owner@aurora.test", "Owner!2024", { role: "Owner" }),
-      demoRow("Coffee shop cashier", "cashier@aurora.test", "Cashier!2024", { role: "Cashier" }),
-      demoRow("Electronics owner", "owner@nova.test", "Owner!2024", { role: "Owner" }));
+      h("div", { class: "auth__demo-head" }, "Demo accounts"),
+      h("div", { class: "auth__demo-grid" },
+        demoChip("Platform developer", "developer@universalpos.dev", "DevAdmin!2024"),
+        demoChip("Coffee shop owner", "owner@aurora.test", "Owner!2024"),
+        demoChip("Coffee shop cashier", "cashier@aurora.test", "Cashier!2024"),
+        demoChip("Electronics owner", "owner@nova.test", "Owner!2024")));
 
-    function demoRow(name, mail, pass, meta) {
-      return h("div", { class: "auth__demo-row" },
-        h("span", { class: "grow" }, h("strong", {}, name), " ", h("span", { class: "dim" }, meta.role)),
-        h("code", {}, mail),
-        button("Use", {
-          size: "sm",
-          variant: "soft",
-          onClick: () => {
-            email.value = mail;
-            password.value = pass;
-            email.dispatchEvent(new Event("input"));
-          },
-        }));
+    function demoChip(name, mail, pass) {
+      return h("button", {
+        class: "auth__demo-chip",
+        type: "button",
+        title: `Fill in ${mail}`,
+        onClick: () => {
+          email.value = mail;
+          password.value = pass;
+          email.dispatchEvent(new Event("input"));
+        },
+      },
+      h("span", { class: "auth__demo-name" }, name),
+      h("span", { class: "auth__demo-mail" }, mail));
     }
 
     return h("div", {}, form, demo);
@@ -123,7 +126,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
     const submit = button("Create my workspace", { variant: "primary", size: "lg", block: true, type: "submit" });
 
     const form = h("form", {
-      class: "col gap-4",
+      class: "col gap-3",
       onSubmit: async (e) => {
         e.preventDefault();
         showError("");
@@ -151,15 +154,15 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
         }
       },
     },
-    field({ label: "Company name", control: company }),
-    field({ label: "Your name", control: name }),
-    field({ label: "Work email", control: email }),
-    field({ label: "Password", control: password, hint: "Minimum 8 characters." }),
-    field({ label: "Currency", control: currency, hint: "You can change this later in settings." }),
     formGrid2([
-      field({ label: "VAT registration number", control: vat, hint: "For Zimbabwe, your ZIMRA VAT number" }),
-      field({ label: "Company registration number", control: companyReg, hint: "Registrar of Companies number" }),
+      field({ label: "Company name", control: company }),
+      field({ label: "Your name", control: name }),
+      field({ label: "Work email", control: email }),
+      field({ label: "Password", control: password, hint: "Minimum 8 characters." }),
+      field({ label: "Currency", control: currency }),
+      field({ label: "VAT registration number", control: vat }),
     ]),
+    field({ label: "Company registration number", control: companyReg }),
     submit,
     h("p", { class: "tiny dim center" },
       "You become the workspace Administrator with full access. You will start on a 14-day trial with every module available."));
@@ -181,6 +184,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       h("h1", { class: "auth__headline" }, "One POS. Every business. Your rules."),
       h("p", { class: "auth__lead" },
         "Start with a complete point of sale, then switch on the modules you need — inventory, loyalty, tips, multi-location, custom workspaces and more. Every screen, colour and receipt is yours to shape."),
+      isStandalone() ? null : installRow("hero"),
       h("div", { class: "auth__points" },
         point("sparkles", "Compose your own POS", "Enable only the modules you sell with, and configure each one."),
         point("palette", "Brand every pixel", "Colours, logo, receipts and dashboards follow your brand."),
@@ -194,7 +198,21 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
           : "Create a company workspace and start selling in minutes."),
         tabsHost,
         errorHost,
-        formHost)));
+        formHost,
+        isStandalone() ? null : installRow("card"))));
+}
+
+function installRow(variant) {
+  return h("div", { class: `auth__install auth__install--${variant}` },
+    h("div", { class: "auth__install-copy" },
+      h("div", { class: "auth__install-title" }, "Install Universal POS"),
+      h("div", { class: "auth__install-hint" }, "Opens full screen with its own icon — offline shell included.")),
+    button("Install app", {
+      icon: "download",
+      size: "sm",
+      variant: "ghost",
+      onClick: () => installApp(),
+    }));
 }
 
 function point(iconName, title, text) {

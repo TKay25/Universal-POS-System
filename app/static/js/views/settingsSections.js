@@ -734,6 +734,11 @@ SECTION_RENDERERS.modules = async (host) => {
 
   const search = textInput({ placeholder: "Find a module…", className: "input--sm" });
   const grid = h("div", { class: "module-grid" });
+  const enabledCount = () => Object.values(state).filter((entry) => entry.enabled).length;
+  const countBadge = badge(`${enabledCount()} of ${catalog.length} enabled`, "primary");
+  const refreshCount = () => {
+    countBadge.textContent = `${enabledCount()} of ${catalog.length} enabled`;
+  };
 
   function openConfig(module, current) {
     const controls = [];
@@ -788,6 +793,22 @@ SECTION_RENDERERS.modules = async (host) => {
         h("div", { class: "nav__label", style: { padding: "2px 0" } }, category)));
       for (const module of filtered) {
         const current = state[module.key] || { enabled: module.default, config: module.config };
+        const toggle = module.locked ? null : switchControl({
+          checked: current.enabled,
+          onChange: async (value) => {
+            try {
+              const result = await patch(`/company/modules/${module.key}`, { enabled: value });
+              state[module.key] = result.module;
+              cardEl.classList.toggle("is-on", value);
+              refreshCount();
+              toast(`${module.name} ${value ? "enabled" : "disabled"}.`, "success");
+              refreshSession().catch(() => {});
+            } catch (error) {
+              toggle.setChecked(!value);
+              toast(error.message, "error");
+            }
+          },
+        });
         const cardEl = h("div", { class: `module-card${current.enabled ? " is-on" : ""}` },
           h("div", { class: "module-card__head" },
             h("div", { class: "module-card__icon" }, icon(module.icon || "sparkles")),
@@ -801,32 +822,17 @@ SECTION_RENDERERS.modules = async (host) => {
             module.schema.length
               ? iconButton("sliders", { size: "sm", variant: "ghost", title: "Configure", onClick: () => openConfig(module, current) })
               : null,
-            module.locked
-              ? badge("Always on", "success")
-              : switchControl({
-                checked: current.enabled,
-                onChange: async (value) => {
-                  try {
-                    await patch(`/company/modules/${module.key}`, { enabled: value });
-                    await refreshSession();
-                    cardEl.classList.toggle("is-on", value);
-                    toast(`${module.name} ${value ? "enabled" : "disabled"}.`, "success");
-                  } catch (error) {
-                    toast(error.message, "error");
-                  }
-                },
-              })));
+            module.locked ? badge("Always on", "success") : toggle));
         grid.appendChild(cardEl);
       }
     }
   }
 
   search.addEventListener("input", () => renderGrid(search.value.toLowerCase().trim()));
-  const enabledCount = Object.values(state).filter((entry) => entry.enabled).length;
   host.appendChild(card("Modules", "Compose the POS you need — switch features on, then tune them",
     h("div", { class: "col gap-3" },
       h("div", { class: "flex justify-between items-center gap-2 wrap" },
-        badge(`${enabledCount} of ${catalog.length} enabled`, "primary"),
+        countBadge,
         h("div", { style: { width: "220px" } }, search)),
       grid)));
   renderGrid();

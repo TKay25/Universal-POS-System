@@ -12,6 +12,7 @@ import {
 } from "../core/ui.js";
 import { areaChart } from "../core/charts.js";
 import { busyOverlay, withButtonSpinner } from "../core/loading.js";
+import { installApp, isStandalone } from "../core/pwa.js";
 import { openSaleDetail } from "./saleDetail.js";
 
 const PERIODS = [
@@ -112,6 +113,9 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     ];
     if (isDeveloper() && impersonating()) {
       items.push({ label: "Developer console", icon: "shield", onClick: () => onOpenFullApp?.() });
+    }
+    if (!isStandalone()) {
+      items.push({ label: "Install app", icon: "download", onClick: () => installApp() });
     }
     items.push("-");
     items.push({ label: "Sign out", icon: "logout", danger: true, onClick: () => onSignOut?.() });

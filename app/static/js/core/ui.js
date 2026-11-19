@@ -326,8 +326,17 @@ export function pagination(meta, onPage) {
 /* ---------- overlays ------------------------------------------------------ */
 const overlayStack = [];
 
+/* While a dialog is open the page behind it must not move; only the dialog
+   body scrolls. */
+function syncOverlayLock() {
+  const root = document.documentElement;
+  if (overlayStack.length) root.dataset.overlay = "1";
+  else delete root.dataset.overlay;
+}
+
 function pushOverlay(entry) {
   overlayStack.push(entry);
+  syncOverlayLock();
   const onKey = (e) => {
     if (e.key === "Escape" && entry.dismissible) {
       e.stopPropagation();
@@ -341,6 +350,7 @@ function pushOverlay(entry) {
 function popOverlay(entry) {
   const index = overlayStack.indexOf(entry);
   if (index >= 0) overlayStack.splice(index, 1);
+  syncOverlayLock();
   document.removeEventListener("keydown", entry.keyHandler);
 }
 
