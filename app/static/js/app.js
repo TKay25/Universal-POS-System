@@ -24,7 +24,6 @@ import loginView from "./views/login.js";
 import dashboardView from "./views/dashboard.js";
 import posView from "./views/pos.js";
 import salesView from "./views/sales.js";
-import productsView from "./views/products.js";
 import inventoryView from "./views/inventory.js";
 import customersView from "./views/customers.js";
 import departmentsView from "./views/departments.js";
@@ -41,7 +40,6 @@ const views = {
   dashboard: dashboardView,
   pos: posView,
   sales: salesView,
-  products: productsView,
   inventory: inventoryView,
   customers: customersView,
   departments: departmentsView,
@@ -81,14 +79,6 @@ const routes = [
     perm: "pos.sell",
   },
   {
-    match: /^\/products\/?$/,
-    tab: "products",
-    view: "products",
-    title: () => "Products",
-    icon: "box",
-    perm: "products.manage",
-  },
-  {
     match: /^\/departments\/?$/,
     tab: "departments",
     view: "departments",
@@ -114,6 +104,7 @@ const routes = [
     icon: "layers",
     module: "inventory",
     perm: "inventory.manage",
+    allowedAlso: ["products.manage"],
   },
   {
     match: /^\/customers\/?$/,
@@ -349,6 +340,9 @@ async function boot() {
       const canSell = currentCompany() && moduleOn("pos") && hasPerm("pos.sell");
       const target = canSell ? "/pos" : "/dashboard";
       window.history.replaceState({ path: target }, "", `#${target}`);
+    } else if (hash.startsWith("/products")) {
+      // The Products tab folded into Inventory; keep old links working.
+      window.history.replaceState({ path: "/inventory" }, "", "#/inventory");
     }
     renderShell();
   } else {
@@ -421,11 +415,10 @@ function navModel() {
     ],
   });
   const catalog = [];
-  if (hasPerm("products.manage")) catalog.push({ label: "Products", path: "/products", icon: "box" });
   if (moduleOn("departments") && hasPerm("products.manage")) {
     catalog.push({ label: "Departments", path: "/departments", icon: "layers" });
   }
-  if (moduleOn("inventory") && hasPerm("inventory.manage")) {
+  if (moduleOn("inventory") && hasAny("inventory.manage", "products.manage")) {
     catalog.push({ label: "Inventory", path: "/inventory", icon: "layers" });
   }
   if (moduleOn("customers") && hasPerm("customers.manage")) {
@@ -519,6 +512,62 @@ function renderShell() {
   if (!window.location.hash.startsWith("#/pos")) {
     setTimeout(prefetchCoreReports, 800);
   }
+  if (currentUser()?.must_change_password) {
+    setTimeout(openFirstRunPassword, 250);
+  }
+}
+
+/* Invited teammates sign in with a temporary password; this is the one screen
+   they cannot skip until they have chosen their own. */
+function openFirstRunPassword() {
+  if (document.querySelector(".modal--first-run")) return;
+  const password = textInput({ type: "password", placeholder: "At least 8 characters", autofocus: true,
+    attrs: { autocomplete: "new-password" } });
+  const confirm = textInput({ type: "password", placeholder: "Type it again",
+    attrs: { autocomplete: "new-password" } });
+  const errorHost = h("div");
+  const submit = button("Save my password", { variant: "primary", icon: "check", block: true });
+  const instance = modal({
+    title: "Choose your password",
+    subtitle: `${currentUser()?.full_name || "Welcome"} - your account started with a temporary password`,
+    size: "sm",
+    dismissible: false,
+    body: h("div", { class: "col gap-3" }, errorHost,
+      alertBox("Pick something only you know. It replaces the temporary password straight away.", "info"),
+      field({ label: "New password", control: password, required: true, hint: "Minimum 8 characters." }),
+      field({ label: "Confirm password", control: confirm, required: true })),
+    footer: [submit],
+  });
+  instance.dialog.classList.add("modal--first-run");
+
+  submit.addEventListener("click", async () => {
+    clear(errorHost);
+    if (password.value.length < 8) {
+      errorHost.appendChild(alertBox("Use at least 8 characters.", "danger"));
+      password.focus();
+      return;
+    }
+    if (password.value !== confirm.value) {
+      errorHost.appendChild(alertBox("The two passwords do not match.", "danger"));
+      confirm.focus();
+      return;
+    }
+    submit.setLoading(true);
+    try {
+      const data = await post("/auth/password", { new_password: password.value });
+      const session = getSession();
+      store.set({ session: { ...session, user: { ...session.user, must_change_password: false, ...(data.item || {}) } } });
+      if (typeof data.item?.must_change_password === "boolean" && data.item.must_change_password) {
+        throw new Error("The password could not be updated. Try again.");
+      }
+      instance.close();
+      toast("Password saved. You are all set.", "success");
+    } catch (error) {
+      errorHost.appendChild(alertBox(error.message, "danger"));
+      submit.setLoading(false);
+    }
+  });
+  setTimeout(() => password.focus(), 60);
 }
 
 function renderSidebar(sidebar) {
@@ -913,7 +962,7 @@ function openPalette() {
   actions.push(
     { label: "Open the till", hint: "Action", icon: "cart", run: () => router?.go("/pos") },
     { label: "Start a new sale", hint: "Action", icon: "plus", run: () => router?.go("/pos") },
-    { label: "Add a product", hint: "Action", icon: "box", run: () => router?.go("/products") },
+    { label: "Add a product", hint: "Action", icon: "box", run: () => router?.go("/inventory") },
     { label: "Departments", hint: "Catalog", icon: "layers", run: () => router?.go("/departments") },
     { label: "Lay-bys", hint: "Selling", icon: "wallet", run: () => router?.go("/laybys") },
     { label: "Open reports", hint: "Action", icon: "chart", run: () => router?.go("/reports") },

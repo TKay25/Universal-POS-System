@@ -25,6 +25,24 @@ function formGrid2(children) {
   return h("div", { style: { display: "grid", "grid-template-columns": "repeat(auto-fit, minmax(160px, 1fr))", gap: "12px" } }, children);
 }
 
+/* Password input with a show/hide toggle, so people can check what they typed. */
+function passwordField(input) {
+  const toggle = h("button", {
+    class: "auth__reveal",
+    type: "button",
+    title: "Show password",
+    attrs: { "aria-label": "Show password", tabindex: "0" },
+  }, icon("eye"));
+  toggle.addEventListener("click", () => {
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    toggle.title = hidden ? "Hide password" : "Show password";
+    toggle.replaceChildren(icon(hidden ? "eyeOff" : "eye"));
+    input.focus();
+  });
+  return h("div", { class: "auth__password" }, input, toggle);
+}
+
 export default function loginView({ onAuthed, initialError = "" } = {}) {
   let mode = "signin";
 
@@ -64,7 +82,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
 
   function signInForm() {
     const email = textInput({ placeholder: "you@company.com", autofocus: true, attrs: { autocomplete: "email" } });
-    const password = textInput({ type: "password", placeholder: "••••••••", attrs: { autocomplete: "current-password" } });
+    const password = textInput({ type: "password", placeholder: "Your password", attrs: { autocomplete: "current-password" } });
     const submit = button("Sign in", { variant: "primary", size: "lg", block: true, type: "submit" });
 
     const form = h("form", {
@@ -85,33 +103,14 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       },
     },
     field({ label: "Email", control: email }),
-    field({ label: "Password", control: password }),
-    submit);
+    field({ label: "Password", control: passwordField(password) }),
+    submit,
+    h("div", { class: "auth__trust" },
+      h("span", {}, icon("shield"), "Encrypted sign-in"),
+      h("span", {}, icon("bolt"), "Works offline once installed"),
+      h("span", {}, icon("phone"), "Same login on the till and the app")));
 
-    const demo = h("div", { class: "auth__demo" },
-      h("div", { class: "auth__demo-head" }, "Demo accounts"),
-      h("div", { class: "auth__demo-grid" },
-        demoChip("Platform developer", "developer@universalpos.dev", "DevAdmin!2024"),
-        demoChip("Coffee shop owner", "owner@aurora.test", "Owner!2024"),
-        demoChip("Coffee shop cashier", "cashier@aurora.test", "Cashier!2024"),
-        demoChip("Electronics owner", "owner@nova.test", "Owner!2024")));
-
-    function demoChip(name, mail, pass) {
-      return h("button", {
-        class: "auth__demo-chip",
-        type: "button",
-        title: `Fill in ${mail}`,
-        onClick: () => {
-          email.value = mail;
-          password.value = pass;
-          email.dispatchEvent(new Event("input"));
-        },
-      },
-      h("span", { class: "auth__demo-name" }, name),
-      h("span", { class: "auth__demo-mail" }, mail));
-    }
-
-    return h("div", {}, form, demo);
+    return h("div", {}, form);
   }
 
   function registerForm() {

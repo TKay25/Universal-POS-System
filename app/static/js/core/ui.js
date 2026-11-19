@@ -341,10 +341,11 @@ export function table({ columns, rows, empty = {}, onRowClick, loading = false, 
       action: empty.action });
   }
   const tableEl = h("table", { class: `table${compact ? " table--compact" : ""}` });
+  const priorityClass = (col) => (col.priority ? ` col-${col.priority}` : "");
   const head = h("tr");
   for (const col of columns) {
     head.appendChild(h("th", {
-      class: `${col.align === "right" ? "num" : ""}`,
+      class: `${col.align === "right" ? "num" : ""}${priorityClass(col)}`,
       style: col.width ? { width: col.width } : null,
     }, col.label));
   }
@@ -357,7 +358,7 @@ export function table({ columns, rows, empty = {}, onRowClick, loading = false, 
     });
     for (const col of columns) {
       const value = col.render ? col.render(row, index) : row[col.key];
-      tr.appendChild(h("td", { class: col.align === "right" ? "num" : "" }, value));
+      tr.appendChild(h("td", { class: `${col.align === "right" ? "num" : ""}${priorityClass(col)}` }, value));
     }
     if (onRowClick) {
       tr.addEventListener("click", (e) => {

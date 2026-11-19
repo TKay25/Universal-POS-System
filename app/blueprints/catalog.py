@@ -98,6 +98,7 @@ def create_category():
         {
             "name": {"type": "str", "required": True, "max_len": 80, "label": "Category name"},
             "color": {"type": "str", "default": "#5b5bd6", "max_len": 20},
+            "icon": {"type": "str", "default": "tag", "max_len": 40},
             "sort_order": {"type": "int", "default": 100, "min": 0, "max": 9999},
             "department_id": {"type": "int", "default": None},
         },
@@ -119,11 +120,13 @@ def create_category():
 def update_category(category_id: int):
     company = current_company()
     category = get_scoped(Category, category_id, company.id)
+    old_icon, old_color = category.icon, category.color
     payload = validate(
         request.get_json(silent=True) or {},
         {
             "name": {"type": "str", "max_len": 80},
             "color": {"type": "str", "max_len": 20},
+            "icon": {"type": "str", "max_len": 40},
             "sort_order": {"type": "int", "min": 0, "max": 9999},
             "is_active": {"type": "bool"},
             "department_id": {"type": "int", "default": None, "allow_blank": True},
@@ -137,6 +140,13 @@ def update_category(category_id: int):
     for key, value in payload.items():
         setattr(category, key, value)
     db.session.commit()
+    # Products that still wear the category's previous look follow the new one;
+    # products with their own tile keep it.
+    if (category.icon, category.color) != (old_icon, old_color) and old_icon and old_color:
+        Product.query.filter_by(
+            company_id=company.id, category_id=category.id, icon=old_icon, color=old_color,
+        ).update({"icon": category.icon, "color": category.color}, synchronize_session=False)
+        db.session.commit()
     return jsonify({"item": category.to_dict()})
 
 
@@ -349,6 +359,12 @@ def _product_payload(company, *, partial: bool):
         category = get_scoped(Category, payload["category_id"], company.id)
         if not payload.get("department_id"):
             payload["department_id"] = category.department_id
+        # The category owns the tile look so product forms stay short: a product
+        # that does not override its icon/colour wears the category's.
+        if "icon" not in body and category.icon:
+            payload["icon"] = category.icon
+        if "color" not in body and category.color:
+            payload["color"] = category.color
     if "department_id" in payload and payload["department_id"]:
         get_scoped(Department, payload["department_id"], company.id)
     if "price" in payload:

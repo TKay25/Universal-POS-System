@@ -278,13 +278,13 @@ def management_insights(company, args, *, location_id: int | None = None) -> dic
                 "tone": "warning",
                 "title": f"{best['name']} is {best['share_percent']}% of revenue",
                 "detail": "Reduce concentration by featuring complementary products.",
-                "route": "/products",
+                "route": "/inventory",
             })
         tips.append({
             "tone": "success",
             "title": f"{best['name']} leads with {_avg_money(best['revenue_cents'], company)}",
             "detail": f"{best['qty']:g} sold · {_avg_money(best['profit_cents'], company)} profit. Keep it available.",
-            "route": "/products",
+            "route": "/inventory",
         })
     if least_products:
         weakest = least_products[0]

@@ -57,8 +57,8 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
   const tabs = availableTabs();
   const state = {
     tab: tabs[0]?.key || "sales",
-    period: "30d",
-    customFrom: isoDay(addDays(-29)),
+    period: "today",
+    customFrom: isoDay(),
     customTo: isoDay(),
     cache: {},
     loading: {},
@@ -265,8 +265,19 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
         h("span", { class: "mchip" }, icon("receipt"), `${number(cards.transactions)} sales`),
         h("span", { class: "mchip" }, icon("cash"), `${money(cards.average_ticket_cents)} avg`))));
 
+    const advice = data.advice;
+    if (advice && advice.headline) {
+      body.appendChild(h("section", { class: `mcard madvice is-${advice.tone || "info"}` },
+        h("div", { class: "madvice__head" },
+          h("span", { class: "madvice__icon" }, icon(advice.tone === "warning" ? "warn" : advice.tone === "success" ? "trend" : "sparkles")),
+          h("span", { class: "madvice__title" }, advice.headline)),
+        (advice.lines || []).length
+          ? h("ul", { class: "madvice__list" }, (advice.lines || []).map((line) => h("li", {}, line)))
+          : null));
+    }
+
     const series = data.series || [];
-    if (series.length > 1) {
+    if (series.length) {
       body.appendChild(section("Revenue and profit", null, areaChart({
         series: [
           { name: "Revenue", color: "var(--primary)", values: series.map((row) => (row.sales_cents || 0) / 100) },

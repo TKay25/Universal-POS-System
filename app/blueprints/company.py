@@ -37,7 +37,7 @@ from app.security import (
     not_found,
     permission_required,
 )
-from app.utils import paginate, search_arg, slugify, validate
+from app.utils import generate_temp_password, paginate, search_arg, slugify, validate
 
 bp = Blueprint("company", __name__, url_prefix="/api/company")
 
@@ -721,7 +721,7 @@ def create_user():
         {
             "full_name": {"type": "str", "required": True, "min_len": 2, "max_len": 120, "label": "Full name"},
             "email": {"type": "email", "required": True, "max_len": 180, "label": "Email"},
-            "password": {"type": "text", "required": True, "min_len": 8, "trim": False, "label": "Password"},
+            "password": {"type": "text", "default": "", "min_len": 8, "trim": False, "label": "Password"},
             "role_id": {"type": "int", "required": True, "label": "Role"},
             "phone": {"type": "str", "default": "", "max_len": 40},
             "pin": {"type": "text", "default": "", "max_len": 12, "trim": False},
@@ -729,26 +729,60 @@ def create_user():
             "avatar_color": {"type": "str", "default": "#5b5bd6", "max_len": 20},
         },
     )
-    if User.query.filter(db.func.lower(User.email) == payload["email"].lower()).first():
-        raise bad_request("That email is already registered.", {"email": "Email already in use."})
+    email = payload["email"].lower()
+    # One account per email address, across every workspace: a second record would
+    # split sign-ins between two logins for the same person.
+    clash = User.query.filter(db.func.lower(User.email) == email).first()
+    if clash is not None:
+        where = "another workspace" if clash.company_id != company.id else "this workspace"
+        raise bad_request(
+            f"{clash.email} already belongs to {clash.full_name} in {where}.",
+            {"email": "That email already has an account."},
+        )
     role = get_scoped(Role, payload["role_id"], company.id)
+    temporary_password = payload["password"] or generate_temp_password()
     user = User(
         company_id=company.id,
         role_id=role.id,
-        email=payload["email"].lower(),
+        email=email,
         full_name=payload["full_name"],
         phone=payload["phone"],
         status=payload["status"],
         avatar_color=payload["avatar_color"],
+        must_change_password=True,
     )
-    user.set_password(payload["password"])
+    user.set_password(temporary_password)
     if payload.get("pin"):
         user.set_pin(payload["pin"])
     db.session.add(user)
     db.session.commit()
     audit("user.created", entity="user", entity_id=user.id,
           summary=f"Added {user.full_name} as {role.name}", commit=True)
-    return jsonify({"item": user.to_dict(include_company=False)}), 201
+    return jsonify({
+        "item": user.to_dict(include_company=False),
+        # Shown once so the admin can pass it on; the user must replace it at first sign-in.
+        "temporary_password": temporary_password,
+    }), 201
+
+
+@bp.post("/users/<int:user_id>/reset-password")
+@login_required
+@company_required
+@permission_required("users.manage")
+def reset_user_password(user_id: int):
+    company = current_company()
+    user = get_scoped(User, user_id, company.id)
+    if user.is_developer:
+        raise bad_request("Platform accounts cannot be edited here.")
+    temporary_password = generate_temp_password()
+    user.set_password(temporary_password)
+    user.must_change_password = True
+    user.failed_logins = 0
+    user.locked_until = None
+    db.session.commit()
+    audit("user.password_reset", entity="user", entity_id=user.id,
+          summary=f"Reset the password for {user.full_name}", commit=True)
+    return jsonify({"item": user.to_dict(include_company=False), "temporary_password": temporary_password})
 
 
 @bp.patch("/users/<int:user_id>")
@@ -790,6 +824,8 @@ def update_user(user_id: int):
             setattr(user, field, payload[field])
     if payload.get("password"):
         user.set_password(payload["password"])
+        # A password set by someone else is temporary by definition.
+        user.must_change_password = True
     if "pin" in payload:
         user.set_pin(payload["pin"] or None)
     db.session.commit()
@@ -1100,7 +1136,7 @@ def onboarding():
         {"key": "modules", "label": "Switch on modules", "hint": "Only pay attention to what you need",
          "done": enabled_modules >= 5, "route": "#/settings/modules"},
         {"key": "products", "label": "Add your first products", "hint": "Build the catalog you sell",
-         "done": products > 0, "route": "#/products"},
+         "done": products > 0, "route": "#/inventory"},
         {"key": "staff", "label": "Invite your team", "hint": "Give everyone the right permissions",
          "done": staff > 1, "route": "#/settings/users"},
         {"key": "customers", "label": "Add a customer", "hint": "Start building relationships",

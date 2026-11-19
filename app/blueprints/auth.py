@@ -223,18 +223,28 @@ def change_password():
     payload = validate(
         request.get_json(silent=True) or {},
         {
-            "current_password": {"type": "text", "required": True, "trim": False, "label": "Current password"},
+            "current_password": {"type": "text", "default": "", "trim": False, "label": "Current password"},
             "new_password": {"type": "text", "required": True, "min_len": 8, "trim": False,
                              "label": "New password"},
         },
     )
     user = current_user()
-    if not user.check_password(payload["current_password"]):
-        raise bad_request("Your current password is not correct.", {"current_password": "Incorrect password."})
+    # First sign-in: they just proved the temporary password at login, so only the
+    # new one is required. Every later change still asks for the current password.
+    first_run = bool(user.must_change_password)
+    if not first_run:
+        if not payload.get("current_password"):
+            raise bad_request("Enter your current password.", {"current_password": "Required."})
+        if not user.check_password(payload["current_password"]):
+            raise bad_request("Your current password is not correct.", {"current_password": "Incorrect password."})
+    if payload["new_password"] == payload.get("current_password"):
+        raise bad_request("Choose a password you have not used before.", {"new_password": "Pick a new password."})
     user.set_password(payload["new_password"])
+    user.must_change_password = False
     db.session.commit()
-    audit("auth.password_changed", entity="user", entity_id=user.id, summary="Password changed", commit=True)
-    return jsonify({"ok": True})
+    audit("auth.password_changed", entity="user", entity_id=user.id,
+          summary="Password set at first sign-in" if first_run else "Password changed", commit=True)
+    return jsonify({"ok": True, "item": user.to_dict(include_company=False)})
 
 
 @bp.post("/switch-user")

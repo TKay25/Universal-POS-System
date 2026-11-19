@@ -231,11 +231,18 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
         for attempt in range(4):
             try:
                 db.create_all()
+                from app.schema import ensure_columns
+
+                ensure_columns()
                 if app.config.get("SEED_DEMO_DATA") and not app.config.get("TESTING"):
                     from app.seed import seed_all
 
                     seed_all(app)
                 if not app.config.get("TESTING"):
+                    # Give categories created before icons existed a sensible tile.
+                    from app.schema import backfill_category_icons
+
+                    backfill_category_icons()
                     # Give pre-existing stock its first FIFO cost layer.
                     from app.models import Company
                     from app.services import fifo

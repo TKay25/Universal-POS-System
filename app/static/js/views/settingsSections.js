@@ -1394,13 +1394,33 @@ SECTION_RENDERERS.users = async (host) => {
               h("div", { class: "tiny dim" }, user.email))),
         },
         { key: "role", label: "Role", render: (user) => badge(user.role || "No role", "primary") },
-        { key: "pin_enabled", label: "PIN", render: (user) => (user.pin_enabled ? badge("Set", "success") : h("span", { class: "dim" }, "—")) },
-        { key: "status", label: "Status", render: (user) => statusBadge(user.status) },
-        { key: "last_login_at", label: "Last sign-in", render: (user) => h("span", { class: "dim" }, user.last_login_at ? dateTime(user.last_login_at) : "Never") },
+        { key: "pin_enabled", label: "PIN", priority: "low", render: (user) => (user.pin_enabled ? badge("Set", "success") : h("span", { class: "dim" }, "—")) },
+        {
+          key: "status", label: "Status",
+          render: (user) => h("div", { class: "flex gap-1 wrap" },
+            statusBadge(user.status),
+            user.must_change_password ? badge("Temp password", "warning") : null),
+        },
+        { key: "last_login_at", label: "Last sign-in", priority: "mid", render: (user) => h("span", { class: "dim" }, user.last_login_at ? dateTime(user.last_login_at) : "Never") },
         {
           key: "actions", label: "", align: "right",
           render: (user) => h("div", { class: "table-actions" },
             iconButton("edit", { size: "sm", variant: "ghost", title: "Edit", onClick: () => openForm(user, data.roles) }),
+            user.is_developer ? null : iconButton("key", { size: "sm", variant: "ghost", title: "Reset password", onClick: async () => {
+              const ok = await confirmDialog({
+                title: `Reset the password for ${user.full_name}?`,
+                message: "We generate a new temporary password. They choose their own the next time they sign in.",
+                confirmLabel: "Reset password",
+              });
+              if (!ok) return;
+              try {
+                const result = await post(`/company/users/${user.id}/reset-password`);
+                revealTemporaryPassword(result.item, result.temporary_password, { reset: true });
+                load();
+              } catch (error) {
+                toast(error.message, "error");
+              }
+            } }),
             iconButton("trash", { size: "sm", variant: "ghost", danger: true, title: "Remove", onClick: async () => {
               const ok = await confirmDialog({ title: `Remove ${user.full_name}?`, message: "Their sales history stays in reports.", confirmLabel: "Remove", danger: true });
               if (!ok) return;
@@ -1417,13 +1437,37 @@ SECTION_RENDERERS.users = async (host) => {
     }));
   }
 
+  /* Show the one-time password once, with a copy button: it is never readable again. */
+  function revealTemporaryPassword(user, temporaryPassword, { reset = false } = {}) {
+    let instance;
+    const copy = button("Copy", { icon: "copy", size: "sm", onClick: async () => {
+      try {
+        await navigator.clipboard.writeText(temporaryPassword);
+        toast("Password copied.", "success");
+      } catch {
+        toast("Select the password and copy it manually.", "warning");
+      }
+    } });
+    instance = modal({
+      title: reset ? "New temporary password" : "Teammate added",
+      subtitle: `${user.full_name} · ${user.email}`,
+      size: "sm",
+      body: h("div", { class: "col gap-3" },
+        h("div", { class: "temp-pass" },
+          h("span", { class: "temp-pass__value mono" }, temporaryPassword),
+          copy),
+        alertBox("Share this once with your teammate. They will be asked to choose their own password the first time they sign in.", "info")),
+      footer: [button("Done", { variant: "primary", onClick: () => instance.close() })],
+    });
+  }
+
   function openForm(user, roles) {
     const isEdit = Boolean(user);
     const fullName = textInput({ value: user?.full_name || "", placeholder: "Full name" });
     const email = textInput({ type: "email", value: user?.email || "", placeholder: "name@company.com" });
     const phone = textInput({ value: user?.phone || "", placeholder: "Phone" });
     const role = select({ value: user?.role_id || roles[0]?.id, options: roles.map((entry) => ({ value: entry.id, label: entry.name })) });
-    const password = textInput({ type: "password", placeholder: isEdit ? "Leave blank to keep current" : "At least 8 characters" });
+    const password = textInput({ type: "password", placeholder: "Leave blank to keep the temporary password" });
     const pin = textInput({ value: "", placeholder: "4-digit terminal PIN", maxlength: 12 });
     const status = select({
       value: user?.status || "active",
@@ -1432,13 +1476,17 @@ SECTION_RENDERERS.users = async (host) => {
     const errorHost = h("div");
     const instance = modal({
       title: isEdit ? `Edit ${user.full_name}` : "Add a teammate",
+      subtitle: isEdit ? null : "We generate a temporary password for them",
       size: "sm",
       body: h("div", { class: "col gap-3" }, errorHost,
         field({ label: "Full name", control: fullName, required: true }),
-        field({ label: "Email", control: email, required: !isEdit }),
+        field({ label: "Email", control: email, required: !isEdit,
+          hint: "One account per email - we check before saving." }),
         field({ label: "Phone", control: phone }),
         formGrid([field({ label: "Role", control: role }), field({ label: "Status", control: status })]),
-        field({ label: "Password", control: password, required: !isEdit }),
+        isEdit
+          ? field({ label: "Password", control: password, hint: "Leave blank to keep theirs. Anything you set here must be changed at their next sign-in." })
+          : null,
         field({ label: "Terminal PIN", control: pin, hint: "Used for quick cashier switching." })),
       footer: [button("Cancel", { onClick: () => instance.close() }), button(isEdit ? "Save changes" : "Add teammate", { variant: "primary", onClick: async () => {
         const payload = {
@@ -1451,14 +1499,22 @@ SECTION_RENDERERS.users = async (host) => {
         if (password.value) payload.password = password.value;
         if (pin.value) payload.pin = pin.value;
         try {
-          if (isEdit) await patch(`/company/users/${user.id}`, payload);
-          else await post("/company/users", payload);
-          toast("Team updated.", "success");
-          instance.close();
+          if (isEdit) {
+            await patch(`/company/users/${user.id}`, payload);
+            toast("Team updated.", "success");
+            instance.close();
+          } else {
+            const result = await post("/company/users", payload);
+            instance.close();
+            revealTemporaryPassword(result.item, result.temporary_password);
+          }
           load();
         } catch (error) {
           clear(errorHost);
-          errorHost.appendChild(alertBox(error.message, "danger"));
+          errorHost.appendChild(alertBox(
+            error.fields && Object.keys(error.fields).length
+              ? `${error.message} ${Object.values(error.fields).join(" ")}`
+              : error.message, "danger"));
         }
       } })],
     });

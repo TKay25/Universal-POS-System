@@ -6,6 +6,7 @@ import { number, dateTime } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import { hasPerm, moduleOn } from "../core/store.js";
 import { requireBranchAction } from "../core/branch.js";
+import { openCategoryEditor, openCategoriesManager } from "./productForms.js";
 import { pageHeader, sectionCard, button, iconButton, badge, toast, alertBox, field, textInput, textarea,
   select, switchControl, modal, confirmDialog, emptyState, statCard, menu, formGrid, searchLoader } from "../core/ui.js";
 
@@ -261,116 +262,17 @@ export default async function departmentsView(ctx) {
     });
   }
 
-  function openCategoryForm(category = null, department = null) {
-  if (!requireBranchAction()) return;
-    const name = textInput({ value: category?.name || "", placeholder: "e.g. TVs" });
-    let color = category?.color || department?.color || COLORS[0];
-    const colorHost = h("div", { class: "thumbs" });
-    const departmentSelect = select({
-      value: category?.department_id || department?.id || "",
-      options: [{ value: "", label: "No department" }, ...departments.map((row) => ({ value: row.id, label: row.name }))],
-    });
-    const active = switchControl({ checked: category ? category.is_active : true, label: "Active" });
-    const errorHost = h("div");
-
-    function paintColors() {
-      clear(colorHost);
-      for (const choice of COLORS) {
-        const btn = h("button", {
-          class: `thumb${color === choice ? " is-active" : ""}`,
-          type: "button",
-          style: { background: choice, color: "#fff" },
-          onClick: () => {
-            color = choice;
-            paintColors();
-          },
-        }, color === choice ? icon("check") : "");
-        colorHost.appendChild(btn);
-      }
-    }
-    paintColors();
-
-    const instance = modal({
-      title: category ? `Edit ${category.name}` : "New category",
-      size: "sm",
-      body: h("div", { class: "col gap-3" }, errorHost,
-        field({ label: "Name", control: name, required: true }),
-        field({ label: "Department", control: departmentSelect }),
-        field({ label: "Colour", control: colorHost }),
-        active,
-        category ? h("div", { class: "tiny dim" }, `${category.product_count} products in this category`) : null),
-      footer: [
-        category && hasPerm("products.manage")
-          ? button("Delete", { variant: "ghost", danger: true, onClick: async () => {
-            const ok = await confirmDialog({
-              title: `Delete ${category.name}?`,
-              message: "Products in this category become uncategorised.",
-              confirmLabel: "Delete",
-              danger: true,
-            });
-            if (!ok) return;
-            await del(`/categories/${category.id}`);
-            toast("Category deleted.", "success");
-            instance.close();
-            load();
-          } })
-          : null,
-        button("Cancel", { onClick: () => instance.close() }),
-        button(category ? "Save" : "Create", {
-          variant: "primary",
-          onClick: async () => {
-            try {
-              const payload = {
-                name: name.value.trim(),
-                color,
-                department_id: departmentSelect.value ? Number(departmentSelect.value) : null,
-                is_active: active.input.checked,
-              };
-              if (category) await patch(`/categories/${category.id}`, payload);
-              else await post("/categories", payload);
-              toast("Category saved.", "success");
-              instance.close();
-              load();
-            } catch (error) {
-              clear(errorHost);
-              errorHost.appendChild(alertBox(error.message, "danger"));
-            }
-          },
-        }),
-      ].filter(Boolean),
-    });
+  function openCategories() {
+    openCategoriesManager({ departments, onChanged: load });
   }
 
-  function openCategories() {
-    const body = h("div", { class: "col gap-2" });
-    const render = () => {
-      clear(body);
-      for (const category of categories) {
-        body.appendChild(h("div", { class: "flex items-center gap-2", style: { padding: "8px 0", borderBottom: "1px solid var(--border)" } },
-          h("span", { class: "chip__dot", style: { background: category.color, width: "10px", height: "10px" } }),
-          h("div", { class: "grow" },
-            h("div", { class: "strong small" }, category.name),
-            h("div", { class: "tiny dim" }, `${category.department || "No department"} · ${category.product_count} products`)),
-          iconButton("edit", { size: "sm", variant: "ghost", title: "Edit", onClick: () => {
-            instance.close();
-            openCategoryForm(category);
-          } })));
-      }
-      if (!categories.length) body.appendChild(emptyState({ icon: "tag", title: "No categories yet" }));
-    };
-    render();
-    const instance = modal({
-      title: "All categories",
-      subtitle: "Quick edit for every category in the workspace",
-      size: "md",
-      body,
-      footer: [
-        button("New category", { icon: "plus", onClick: () => {
-          instance.close();
-          openCategoryForm();
-        } }),
-        button("Close", { variant: "primary", onClick: () => instance.close() }),
-      ],
+  function openCategoryForm(category = null, department = null) {
+    openCategoryEditor({
+      category,
+      departments,
+      defaultDepartmentId: department?.id || "",
+      defaultColor: department?.color || "",
+      onSaved: load,
     });
   }
 

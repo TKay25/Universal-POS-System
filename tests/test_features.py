@@ -192,6 +192,49 @@ def test_reports_and_sales_can_be_filtered_by_user(client, owner):
     assert report["rows"][0][0] == "Till Operator"
 
 
+def test_invited_users_get_a_temporary_password_and_must_change_it(client, owner):
+    headers = owner["headers"]
+    roles = client.get("/api/company/users", headers=headers).get_json()["roles"]
+    by_name = {role["name"]: role["id"] for role in roles}
+
+    created = client.post(
+        "/api/company/users",
+        json={"full_name": "New Hire", "email": "newhire@test.dev", "role_id": by_name["Cashier"]},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.get_json()
+    body = created.get_json()
+    temporary = body["temporary_password"]
+    assert temporary.startswith("Up-") and len(temporary) > 9
+    assert body["item"]["must_change_password"] is True
+
+    # The same address cannot be invited twice, whatever the casing.
+    duplicate = client.post(
+        "/api/company/users",
+        json={"full_name": "Duplicate", "email": "NewHire@Test.dev", "role_id": by_name["Cashier"]},
+        headers=headers,
+    )
+    assert duplicate.status_code == 422, duplicate.get_json()
+    assert duplicate.get_json()["error"]["fields"]["email"]
+
+    hire = login(client, "newhire@test.dev", temporary)
+    session = client.get("/api/auth/session", headers=hire).get_json()
+    assert session["user"]["must_change_password"] is True
+
+    # First change needs no current password; later changes do.
+    changed = client.post("/api/auth/password", json={"new_password": "MyOwnPass!1"}, headers=hire)
+    assert changed.status_code == 200, changed.get_json()
+    assert changed.get_json()["item"]["must_change_password"] is False
+    again = client.post("/api/auth/password", json={"new_password": "Another!22"}, headers=hire)
+    assert again.status_code == 422, again.get_json()
+
+    headers = login(client, owner["company"]["email"], owner["company"]["password"])
+    reset = client.post(f"/api/company/users/{body['item']['id']}/reset-password", headers=headers)
+    assert reset.status_code == 200, reset.get_json()
+    assert reset.get_json()["temporary_password"] != temporary
+    assert reset.get_json()["item"]["must_change_password"] is True
+
+
 def test_duplicate_sku_and_barcode_are_blocked(client, owner):
     headers = owner["headers"]
     make_product(client, headers)
@@ -727,6 +770,65 @@ def test_activity_log_lists_workspace_actions(client, owner):
     facets = client.get("/api/activity/facets", headers=headers)
     assert facets.status_code == 200, facets.get_json()
     assert "sale" in {area["key"] for area in facets.get_json()["areas"]}
+
+
+def test_category_sets_the_product_tile_and_products_can_override(client, owner):
+    """Categories own the tile look; products inherit it unless they say otherwise."""
+    headers = owner["headers"]
+    created = client.post(
+        "/api/categories",
+        json={"name": "Bakery", "color": "#f59e0b", "icon": "bread"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.get_json()
+    category = created.get_json()["item"]
+    assert category["icon"] == "bread"
+
+    inherited = make_product(client, headers, name="Sourdough", sku="SD-1", barcode="290000001", category_id=category["id"])
+    assert inherited["icon"] == "bread"
+    assert inherited["color"] == "#f59e0b"
+
+    overridden = make_product(
+        client, headers, name="Croissant", sku="CR-1", barcode="290000002",
+        category_id=category["id"], icon="cake", color="#ef4444",
+    )
+    assert overridden["icon"] == "cake"
+    assert overridden["color"] == "#ef4444"
+
+    # Re-filing a plain product into a category adopts that category's tile.
+    loose = make_product(client, headers, name="Plain Bun", sku="PB-1", barcode="290000003")
+    assert loose["icon"] == "box"
+    moved = client.patch(
+        f"/api/products/{loose['id']}",
+        json={"category_id": category["id"]},
+        headers=headers,
+    )
+    assert moved.status_code == 200, moved.get_json()
+    assert moved.get_json()["item"]["icon"] == "bread"
+    assert moved.get_json()["item"]["color"] == "#f59e0b"
+
+    # Renaming a category keeps its icon, and a later product picks the new one up.
+    renamed = client.patch(
+        f"/api/categories/{category['id']}",
+        json={"icon": "cake"},
+        headers=headers,
+    )
+    assert renamed.status_code == 200, renamed.get_json()
+    assert renamed.get_json()["item"]["icon"] == "cake"
+    newer = make_product(client, headers, name="Éclair", sku="EC-1", barcode="290000004", category_id=category["id"])
+    assert newer["icon"] == "cake"
+
+    # Changing a category's tile re-skins inherited products but not custom ones.
+    restyled = client.patch(
+        f"/api/categories/{category['id']}",
+        json={"icon": "kettle", "color": "#0ea5e9"},
+        headers=headers,
+    )
+    assert restyled.status_code == 200, restyled.get_json()
+    inheriting = client.get(f"/api/products/{inherited['id']}", headers=headers).get_json()["item"]
+    assert (inheriting["icon"], inheriting["color"]) == ("kettle", "#0ea5e9")
+    custom = client.get(f"/api/products/{overridden['id']}", headers=headers).get_json()["item"]
+    assert (custom["icon"], custom["color"]) == ("cake", "#ef4444")
 
 
 def test_summary_pdf_breaks_down_by_branch_and_department(client, owner):

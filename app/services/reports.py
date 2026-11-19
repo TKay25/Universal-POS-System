@@ -28,7 +28,7 @@ from app.models import (
     Supplier,
     User,
 )
-from app.utils import csv_response, day_buckets, iso, utcnow
+from app.utils import csv_response, day_buckets, format_money, iso, utcnow
 from app.services.timezones import local_date_sql, local_hour_sql, local_day_bounds, to_local
 
 REVENUE_STATUSES = ("completed", "partially_refunded", "refunded")
@@ -590,13 +590,16 @@ def mobile_snapshot(company, start: datetime, end: datetime, location_id: int | 
     ).all()
 
     stock = low_stock_items(company)
+    previous = _previous_period_totals(company, start, end, statuses, branch_clause)
+    departments = _department_mix(company.id, start, end, statuses, branch_clause)
     return {
         "range": {"from": iso(start), "to": iso(end)},
         "cards": cards,
         "series": series,
         "branches": branches,
-        "departments": _department_mix(company.id, start, end, statuses, branch_clause),
+        "departments": departments,
         "payment_mix": [{"name": row[0], "amount_cents": int(row[1])} for row in payment_rows],
+        "advice": _mobile_advice(company, cards, previous, stock, branches, departments),
         "stock": {
             "alerts": len(stock),
             "low_count": len([item for item in stock if item["stock"] > 0]),
@@ -606,6 +609,98 @@ def mobile_snapshot(company, start: datetime, end: datetime, location_id: int | 
         "local_today": to_local(utcnow(), company).date().isoformat(),
         "generated_at": iso(utcnow()),
     }
+
+
+def _previous_period_totals(company, start, end, statuses, branch_clause) -> dict:
+    """Same-length window immediately before ``start`` - the phone's comparison."""
+    span = end - start
+    previous_end = start - timedelta(microseconds=1)
+    previous_start = previous_end - span
+    row = db.session.execute(
+        select(
+            func.count(Sale.id),
+            func.coalesce(func.sum(Sale.total_cents), 0),
+            func.coalesce(func.sum(Sale.cost_cents), 0),
+        ).where(
+            Sale.company_id == company.id,
+            Sale.created_at >= previous_start,
+            Sale.created_at <= previous_end,
+            Sale.status.in_(statuses),
+            *branch_clause,
+        )
+    ).one()
+    sales_cents = int(row[1] or 0)
+    cost_cents = int(row[2] or 0)
+    return {
+        "transactions": int(row[0] or 0),
+        "sales_cents": sales_cents,
+        "profit_cents": sales_cents - cost_cents,
+    }
+
+
+def _money_line(cents: int, company) -> str:
+    currency = (company.settings or {}).get("currency") or {}
+    symbol = str(currency.get("symbol") or "$")
+    decimals = int(currency.get("decimals") or 2)
+    return format_money(int(cents or 0), symbol, decimals)
+
+
+def _mobile_advice(company, cards, previous, stock, branches, departments) -> dict:
+    """One headline plus two short actions - the phone-sized management summary."""
+    sales_cents = int(cards.get("sales_cents") or 0)
+    profit_cents = int(cards.get("profit_cents") or 0)
+    transactions = int(cards.get("transactions") or 0)
+    lines: list[str] = []
+    tone = "info"
+    headline = ""
+
+    if not transactions:
+        headline = "No sales in this period yet"
+        lines.append("Open the till and ring up a sale - these numbers fill in as you go.")
+        if stock:
+            lines.append(f"{len(stock)} product{'s' if len(stock) != 1 else ''} need restocking before you open.")
+        return {"tone": "info", "headline": headline, "lines": lines[:2]}
+
+    previous_sales = int(previous.get("sales_cents") or 0)
+    if previous_sales:
+        change = (sales_cents - previous_sales) / previous_sales * 100
+        if change >= 0:
+            tone = "success"
+            headline = f"Revenue is up {change:.1f}% on the previous period"
+            lines.append("Keep the stock and staffing that made the gain possible.")
+        else:
+            tone = "warning"
+            headline = f"Revenue is down {abs(change):.1f}% on the previous period"
+            lines.append("Check which products slowed down and push your best seller today.")
+    else:
+        headline = f"{_money_line(sales_cents, company)} from {transactions} sale{'s' if transactions != 1 else ''}"
+        lines.append("No earlier period to compare against yet - keep the momentum going.")
+
+    margin = (profit_cents / sales_cents * 100) if sales_cents else 0
+    if margin < 25:
+        tone = "warning"
+        lines.append(f"Margin is {margin:.0f}% - review buying prices or trim discounts.")
+    low = len([item for item in stock if item["stock"] > 0])
+    out = len([item for item in stock if item["stock"] <= 0])
+    if out or low:
+        parts = []
+        if out:
+            parts.append(f"{out} out of stock")
+        if low:
+            parts.append(f"{low} low")
+        lines.append(f"{' and '.join(parts)} - reorder so tomorrow's sales are not lost.")
+    if len(branches) > 1 and sales_cents:
+        best = max(branches, key=lambda row: row["sales_cents"])
+        share = best["sales_cents"] / sales_cents * 100
+        if share >= 70:
+            lines.append(f"{best['name']} is {share:.0f}% of sales - check what the other branches need.")
+    if len(lines) < 2 and departments:
+        leader = max(departments, key=lambda row: row.get("revenue_cents", 0))
+        if leader.get("name"):
+            lines.append(
+                f"{leader['name']} leads with {_money_line(int(leader.get('revenue_cents') or 0), company)} - keep it stocked."
+            )
+    return {"tone": tone, "headline": headline, "lines": lines[:2]}
 
 
 # --------------------------------------------------------------------------- #

@@ -2,32 +2,44 @@
 
 import { h, clear, debounce } from "../core/dom.js";
 import { icon, productIcon } from "../core/icons.js";
-import { money, number, qty as fmtQty, dateTime } from "../core/fmt.js";
-import { get, post, del, downloadFile } from "../core/http.js";
+import { money, qty as fmtQty, dateTime } from "../core/fmt.js";
+import { get, post, patch, del, downloadFile } from "../core/http.js";
 import { hasPerm, moduleOn, moduleConfig } from "../core/store.js";
 import { pageHeader, sectionCard, button, iconButton, table, pagination, badge, toast, alertBox,
-  field, textInput, select, modal, statusBadge, emptyState, formGrid, statCard, segmented, confirmDialog,
+  field, textInput, select, modal, menu, statusBadge, formGrid, statCard, segmented, confirmDialog,
   fundingPicker,
   moneyInput, searchLoader } from "../core/ui.js";
+import { openProductForm, openMoveProduct, openAdjustStock, openCategoriesManager,
+  printProductLabel } from "./productForms.js";
 
 export default async function inventoryView(ctx) {
   const el = h("div");
   const state = {
     tab: "levels", products: [], movements: [], suppliers: [], meta: null, movementMeta: null, funding: null,
+    categories: [], departments: [], taxes: [], customFields: [], metaLoaded: false,
     loaded: false, search: "", from: "", to: "",
   };
+  const canManageProducts = hasPerm("products.manage");
+  const canManageStock = hasPerm("inventory.manage");
+  const refresh = () => loadProducts();
+
+  const catalogActions = [
+    button("Export", { icon: "download", onClick: async () => {
+      await downloadFile("/products-export.csv");
+      toast("Products exported.", "success");
+    } }),
+    canManageProducts ? button("Categories", { icon: "tag", onClick: () => openCategoriesManager({
+      departments: state.departments,
+      onChanged: () => { state.metaLoaded = false; refresh(); },
+    }) }) : null,
+    canManageStock ? button("Bulk tools", { icon: "upload", onClick: openBulkModal }) : null,
+    canManageProducts ? button("Add product", { variant: "primary", icon: "box", onClick: () => openCreateProduct() }) : null,
+  ].filter(Boolean);
 
   el.appendChild(pageHeader({
     title: "Inventory",
-    subtitle: "What you have, what it is worth and where it went",
-    actions: [
-      button("Stock movements", { icon: "refresh", onClick: () => { state.tab = "movements"; render(); loadMovements(); } }),
-      hasPerm("settings.manage")
-        ? button("Add supplier", { icon: "truck", onClick: openSupplierModal })
-        : null,
-      hasPerm("inventory.manage") ? button("Bulk tools", { icon: "download", onClick: openBulkModal }) : null,
-      button("Receive stock", { variant: "primary", icon: "plus", onClick: openReceiveModal }),
-    ].filter(Boolean),
+    subtitle: "Every product you sell, what it cost and where it went",
+    actions: catalogActions,
   }));
 
   const kpiHost = h("div", { class: "grid grid--kpi mb-4" });
@@ -104,29 +116,45 @@ export default async function inventoryView(ctx) {
 
   function levelsCard() {
     const rows = state.products.filter((row) => matches(row, ["name", "sku", "barcode", "category", "department"]));
+    const cardActions = h("div", { class: "flex gap-2" },
+      canManageStock ? button("Receive stock", { size: "sm", variant: "soft", icon: "plus", onClick: () => openReceiveModal() }) : null,
+      button("Stock movements", { size: "sm", variant: "ghost", icon: "refresh", onClick: () => {
+        state.tab = "movements";
+        state.search = "";
+        searchInput.value = "";
+        render();
+        loadMovements();
+      } }));
     return sectionCard({
       title: "Stock levels",
       subtitle: `${rows.length}${rows.length === state.products.length ? "" : ` of ${state.products.length}`} active products`,
       flush: true,
+      actions: cardActions,
       body: table({
         rows,
         empty: state.search
           ? { icon: "search", title: "Nothing matched", text: `No products match “${state.search}”.` }
-          : { icon: "layers", title: "No products to track", text: "Add products and enable stock tracking." },
+          : { icon: "layers", title: "No products yet", text: "Add your first product to start selling.",
+            action: canManageProducts ? button("Add product", { variant: "primary", icon: "plus", onClick: () => openCreateProduct() }) : null },
         columns: [
           { key: "name", label: "Product", render: (row) => h("div", { class: "flex items-center gap-2" },
             h("div", { class: "module-card__icon product-icon", style: { fontSize: "15px" } }, productIcon(row.icon)),
-            h("div", {}, h("div", { class: "strong" }, row.name), h("div", { class: "tiny dim" }, row.sku || "—"))) },
-          { key: "department", label: "Department", render: (row) => row.department
-            ? h("span", { class: "small" }, row.department)
-            : h("span", { class: "dim" }, "—") },
-          { key: "category", label: "Category", render: (row) => row.category || h("span", { class: "dim" }, "—") },
-          { key: "stock_qty", label: "On hand", align: "right", render: (row) => row.track_stock ? h("span", { class: "strong num" }, fmtQty(row.stock_qty)) : h("span", { class: "dim" }, "untracked") },
-          { key: "low_stock_threshold", label: "Low at", align: "right", render: (row) => row.track_stock ? fmtQty(row.low_stock_threshold) : "—" },
-          { key: "cost_cents", label: "Buying price", align: "right", render: (row) => money(row.cost_cents) },
-          { key: "price_cents", label: "Selling price", align: "right", render: (row) => money(row.price_cents) },
+            h("div", {}, h("div", { class: "strong nowrap" }, row.name),
+              h("div", { class: "tiny dim truncate", style: { maxWidth: "170px" } },
+                row.sku || "—",
+                row.category ? h("span", { class: "only-narrow" }, ` · ${row.category}`) : null))) },
           {
-            key: "value", label: "Stock value (FIFO)", align: "right",
+            key: "category", label: "Category", priority: "mid",
+            render: (row) => h("div", { class: "col" },
+              h("span", {}, row.category || h("span", { class: "dim" }, "—")),
+              row.department ? h("span", { class: "tiny dim" }, row.department) : null),
+          },
+          { key: "stock_qty", label: "On hand", align: "right", render: (row) => row.track_stock ? h("span", { class: "strong num" }, fmtQty(row.stock_qty)) : h("span", { class: "dim" }, "untracked") },
+          { key: "low_stock_threshold", label: "Low at", align: "right", priority: "low", render: (row) => row.track_stock ? fmtQty(row.low_stock_threshold) : "—" },
+          { key: "cost_cents", label: "Cost", align: "right", priority: "low", render: (row) => money(row.cost_cents) },
+          { key: "price_cents", label: "Price", align: "right", render: (row) => money(row.price_cents) },
+          {
+            key: "value", label: "Stock value", align: "right", priority: "low",
             render: (row) => h("span", {
               class: "num",
               title: "Oldest buying prices first — what the stock on the shelf actually cost",
@@ -145,8 +173,16 @@ export default async function inventoryView(ctx) {
           {
             key: "actions", label: "", align: "right",
             render: (row) => h("div", { class: "table-actions" },
-              iconButton("plus", { size: "sm", variant: "ghost", title: "Receive stock", onClick: () => openReceiveModal(row) }),
-              iconButton("minus", { size: "sm", variant: "ghost", title: "Remove stock", onClick: () => openAdjustModal(row, { direction: -1 }) })),
+              canManageProducts
+                ? iconButton("edit", { size: "sm", variant: "ghost", title: "Edit product", onClick: () => openEditProduct(row) })
+                : null,
+              canManageStock
+                ? iconButton("plus", { size: "sm", variant: "ghost", title: "Add stock", onClick: () => openAdjustStock({ product: row, initialTab: "add", onSaved: refresh }) })
+                : null,
+              canManageStock
+                ? iconButton("minus", { size: "sm", variant: "ghost", title: "Remove stock", onClick: () => openAdjustStock({ product: row, initialTab: "remove", onSaved: refresh }) })
+                : null,
+              iconButton("more", { size: "sm", variant: "ghost", title: "More", onClick: (event) => openProductMenu(event.currentTarget, row) })),
           },
         ],
       }),
@@ -177,12 +213,92 @@ export default async function inventoryView(ctx) {
   const supplierTableHost = h("div");
 
   async function loadProducts() {
-    const data = await get("/products", { per_page: 200, active: "1" });
+    const needsMeta = !state.metaLoaded;
+    const [data, categoryData, taxData] = await Promise.all([
+      get("/products", { per_page: 200, active: "1" }),
+      needsMeta ? get("/categories").catch(() => ({ items: [], departments: [] })) : null,
+      needsMeta ? get("/company/taxes").catch(() => ({ items: [] })) : null,
+    ]);
     state.products = data.items;
+    state.customFields = data.custom_fields || [];
+    if (categoryData) {
+      state.categories = categoryData.items || [];
+      state.departments = categoryData.departments || [];
+    }
+    if (taxData) state.taxes = taxData.items || [];
+    state.metaLoaded = Boolean(categoryData && taxData);
     state.loaded = true;
     await loadFunding();
     renderKpis();
     if (state.tab === "levels") render();
+  }
+
+  function productFormOptions(product = null) {
+    return {
+      product,
+      categories: state.categories,
+      departments: state.departments,
+      taxes: state.taxes,
+      customFields: state.customFields,
+      knownProducts: state.products,
+      onSaved: refresh,
+      onPickExisting: (row) => openAdjustStock({ product: row, initialTab: "add", onSaved: refresh }),
+    };
+  }
+
+  function openCreateProduct() {
+    openProductForm(productFormOptions());
+  }
+
+  function openEditProduct(product) {
+    openProductForm({ ...productFormOptions(product), onPickExisting: null });
+  }
+
+  function openProductMenu(anchor, product) {
+    menu(anchor, [
+      canManageProducts ? { label: "Edit product", icon: "edit", onClick: () => openEditProduct(product) } : null,
+      canManageStock
+        ? { label: "Add stock", icon: "plus", onClick: () => openAdjustStock({ product, initialTab: "add", onSaved: refresh }) }
+        : null,
+      canManageStock
+        ? { label: "Remove stock", icon: "minus", onClick: () => openAdjustStock({ product, initialTab: "remove", onSaved: refresh }) }
+        : null,
+      canManageStock
+        ? { label: "Set exact count", icon: "sliders", onClick: () => openAdjustStock({ product, initialTab: "set", onSaved: refresh }) }
+        : null,
+      canManageProducts
+        ? { label: "Move to department / category", icon: "layers",
+          onClick: () => openMoveProduct({ product, categories: state.categories, departments: state.departments, onSaved: refresh }) }
+        : null,
+      { label: "Print label", icon: "barcode", onClick: () => printProductLabel(product) },
+      canManageProducts
+        ? { label: "Duplicate", icon: "copy", onClick: () => openProductForm(productFormOptions({
+          ...product, id: null, name: `${product.name} (copy)`, sku: "", barcode: "", stock_qty: 0 })) }
+        : null,
+      canManageProducts ? "-" : null,
+      canManageProducts
+        ? { label: product.is_active ? "Archive" : "Restore", icon: product.is_active ? "x" : "check", danger: product.is_active,
+          onClick: async () => {
+            await patch(`/products/${product.id}`, { is_active: !product.is_active });
+            toast(product.is_active ? "Product archived." : "Product restored.", "success");
+            refresh();
+          } }
+        : null,
+      canManageProducts
+        ? { label: "Delete", icon: "trash", danger: true, onClick: async () => {
+          const confirmed = await confirmDialog({
+            title: `Delete ${product.name}?`,
+            message: "Products with sales history are archived instead of deleted.",
+            confirmLabel: "Delete",
+            danger: true,
+          });
+          if (!confirmed) return;
+          await del(`/products/${product.id}`);
+          toast("Product removed.", "success");
+          refresh();
+        } }
+        : null,
+    ].filter(Boolean));
   }
 
   async function loadFunding() {
@@ -332,397 +448,85 @@ export default async function inventoryView(ctx) {
     }
   }
 
-  function openAdjustModal(product, { direction = 1, tab = "delta" } = {}) {
-    const state = { tab, direction };
-    const amount = textInput({ type: "number", step: "0.001", min: "0", placeholder: "0" });
-    const counted = textInput({ type: "number", step: "0.001", min: "0", placeholder: fmtQty(product.stock_qty) });
-    const deltaReason = select({
-      value: "adjustment",
-      options: [
-        { value: "adjustment", label: "Manual adjustment" },
-        { value: "wastage", label: "Wastage" },
-        { value: "correction", label: "Correction" },
-      ],
-    });
-    const setReason = select({
-      value: "count",
-      options: [
-        { value: "count", label: "Stock count" },
-        { value: "correction", label: "Correction" },
-        { value: "adjustment", label: "Manual adjustment" },
-      ],
-    });
-    const note = textInput({ placeholder: "Reason note" });
-    const preview = h("div", { class: "change-due" }, h("span", {}, "New level"), h("span", { class: "num" }, fmtQty(product.stock_qty)));
-    const errorHost = h("div");
-    const fieldsHost = h("div", { class: "col gap-3" });
-    const tabsRow = h("div", { class: "modal-tabs" });
-
-    function currentQty() {
-      if (state.tab === "set") return Number(counted.value) || 0;
-      return product.stock_qty + state.direction * (Number(amount.value) || 0);
-    }
-
-    function addingStock() {
-      return state.tab === "set"
-        ? (Number(counted.value) || 0) > Number(product.stock_qty || 0)
-        : state.direction > 0;
-    }
-
-    const buyingPrice = moneyInput({
-      placeholder: "What you paid per unit",
-      value: product.cost_cents ? (product.cost_cents / 100).toFixed(2) : "",
-    });
-    const funding = fundingPicker({ required: false });
-
-    function update() {
-      preview.lastChild.textContent = fmtQty(Math.round(currentQty() * 1000) / 1000);
-      preview.lastChild.style.color = currentQty() < 0 ? "var(--danger)" : "";
-    }
-
-    function renderTabs() {
-      clear(tabsRow);
-      for (const tab of [
-        { key: "delta", label: "Add / remove", icon: "plus" },
-        { key: "set", label: "Set exact", icon: "sliders" },
-      ]) {
-        tabsRow.appendChild(h("button", {
-          class: `modal-tab${state.tab === tab.key ? " is-active" : ""}`,
-          type: "button",
-          onClick: () => { state.tab = tab.key; renderTabs(); renderFields(); update(); },
-        }, icon(tab.icon), h("span", {}, tab.label)));
-      }
-    }
-
-    function renderFields() {
-      clear(fieldsHost);
-      if (state.tab === "delta") {
-        const directionSwitch = segmented(
-          [{ value: "1", label: "Add stock", icon: "plus" }, { value: "-1", label: "Remove stock", icon: "minus" }],
-          {
-            value: String(state.direction),
-            onChange: (value) => { state.direction = Number(value); renderFields(); update(); },
-          },
-        );
-        fieldsHost.append(
-          directionSwitch,
-          field({ label: "Quantity", control: amount, hint: "How many units to add or take out." }),
-          state.direction > 0
-            ? field({ label: "Buying price", control: buyingPrice, required: true,
-              hint: "What this stock cost you — FIFO uses it for profit and stock value." })
-            : null,
-          state.direction > 0
-            ? h("div", { class: "col gap-3" }, funding.fields)
-            : null,
-          field({ label: "Reason", control: deltaReason }),
-          field({ label: "Note", control: note }),
-        );
-      } else {
-        fieldsHost.append(
-          field({ label: "Counted quantity", control: counted, hint: "What is physically on the shelf right now." }),
-          addingStock()
-            ? field({ label: "Buying price", control: buyingPrice, required: true,
-              hint: "Used for the extra units this count adds (FIFO)." })
-            : null,
-          addingStock()
-            ? h("div", { class: "col gap-3" }, funding.fields)
-            : null,
-          field({ label: "Reason", control: setReason }),
-          field({ label: "Note", control: note }),
-        );
-      }
-    }
-
-    amount.addEventListener("input", update);
-    counted.addEventListener("input", update);
-    renderTabs();
-    renderFields();
-
-    const instance = modal({
-      title: "Adjust stock",
-      subtitle: `${product.name} · ${fmtQty(product.stock_qty)} on hand`,
-      size: "sm",
-      body: h("div", { class: "col gap-3" }, errorHost, tabsRow, fieldsHost, preview),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button("Apply", { variant: "primary", onClick: async (event) => {
-        const trigger = event.currentTarget;
-        trigger.setLoading(true);
-        clear(errorHost);
-        try {
-          const qty = state.tab === "set"
-            ? Number(counted.value) || 0
-            : state.direction * (Number(amount.value) || 0);
-          if (addingStock() && buyingPrice.value === "") {
-            trigger.setLoading(false);
-            errorHost.appendChild(alertBox("Enter the buying price for the stock you are adding.", "danger"));
-            return;
-          }
-          if (addingStock() && !funding.value()) {
-            trigger.setLoading(false);
-            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
-            funding.picker.focus();
-            return;
-          }
-          await post(`/products/${product.id}/stock`, {
-            mode: state.tab,
-            qty,
-            reason: state.tab === "set" ? setReason.value : deltaReason.value,
-            note: note.value.trim(),
-            buying_price: addingStock() ? buyingPrice.value : undefined,
-            funding_source: addingStock() ? funding.value() : undefined,
-            funding_note: addingStock() ? funding.noteValue() : undefined,
-          });
-          toast("Stock adjusted.", "success");
-          instance.close();
-          loadProducts();
-        } catch (error) {
-          clear(errorHost);
-          errorHost.appendChild(alertBox(error.message, "danger"));
-        } finally {
-          trigger.setLoading(false);
-        }
-      } })],
-    });
-  }
 
   function openReceiveModal(product = null) {
-    let mode = product ? "existing" : "existing";
-    let departments = [];
-    let categories = [];
-    let products = [...state.products];
     const dataListId = `inventory-product-suggestions-${Date.now()}`;
-    const suggestionList = h("datalist", { id: dataListId });
-
-    const modeHost = h("div", { class: "segmented" });
-    const existingHost = h("div", { class: "col gap-3" });
-    const newHost = h("div", { class: "col gap-3 hidden" });
-
+    const suggestionList = h("datalist", { id: dataListId },
+      state.products.map((row) => h("option", { value: row.name }, row.sku || "")));
     const search = textInput({
-      placeholder: "Start typing a product name, SKU or barcode…",
+      placeholder: "Start typing a product name, SKU or barcode...",
       value: product?.name || "",
       attrs: { list: dataListId },
     });
     const productSelect = select({
       value: product?.id || "",
-      options: products.map((row) => ({
+      options: state.products.map((row) => ({
         value: row.id,
-        label: `${row.name}${row.sku ? ` · ${row.sku}` : ""} (${fmtQty(row.stock_qty)} on hand)`,
+        label: `${row.name}${row.sku ? ` / ${row.sku}` : ""} (${fmtQty(row.stock_qty)} on hand)`,
       })),
-      placeholder: products.length ? "Choose a product" : "No products yet - create one below",
+      placeholder: state.products.length ? "Choose a product" : "No products yet",
     });
     const quantity = textInput({ type: "number", step: "0.001", placeholder: "0" });
     const buyingPrice = moneyInput({ placeholder: "What you paid per unit", value: product?.cost_cents ? (product.cost_cents / 100).toFixed(2) : "" });
     const sellingPrice = moneyInput({ placeholder: "Optional - updates selling price" });
     const funding = fundingPicker({ required: true });
-    const fundingNew = fundingPicker({ required: true });
     const supplier = select({ value: "", options: [{ value: "", label: "No supplier" }] });
     const reference = textInput({ placeholder: "Invoice / delivery note" });
     const note = textInput({ placeholder: "e.g. Weekly coffee delivery" });
-
-    const newName = textInput({ placeholder: "Product name" });
-    const newSku = textInput({ placeholder: "SKU" });
-    const newBarcode = textInput({ placeholder: "Scan or type a barcode" });
-    const newDepartment = select({ value: "", options: [{ value: "", label: "No department" }] });
-    const newCategory = select({ value: "", options: [{ value: "", label: "No category" }] });
-    const newBuying = moneyInput({ placeholder: "0.00" });
-    const newSelling = moneyInput({ placeholder: "0.00" });
-    const newQty = textInput({ type: "number", step: "0.001", value: "0" });
-    const newThreshold = textInput({ type: "number", value: "5", min: "0" });
-    const newUnit = textInput({ value: "unit" });
-
-    const duplicateHint = h("div");
     const errorHost = h("div");
 
-    function refreshSuggestions() {
-      clear(suggestionList);
-      for (const row of products) {
-        suggestionList.appendChild(h("option", { value: row.name }, row.sku || ""));
-      }
-    }
-    refreshSuggestions();
-
-    async function loadMeta() {
-      try {
-        const [categoryData, supplierData] = await Promise.all([
-          get("/categories"),
-          get("/company/suppliers").catch(() => ({ items: [] })),
-        ]);
-        departments = categoryData.departments || [];
-        categories = categoryData.items || [];
-        clear(newDepartment);
-        newDepartment.appendChild(h("option", { value: "" }, "No department"));
-        for (const row of departments) newDepartment.appendChild(h("option", { value: row.id }, row.name));
-        paintCategories();
-        clear(supplier);
-        supplier.appendChild(h("option", { value: "" }, "No supplier"));
-        for (const row of supplierData.items || []) supplier.appendChild(h("option", { value: row.id }, row.name));
-      } catch { /* non-fatal */ }
-    }
-
-    function paintCategories() {
-      const keep = newCategory.value;
-      clear(newCategory);
-      newCategory.appendChild(h("option", { value: "" }, "No category"));
-      const filtered = newDepartment.value
-        ? categories.filter((row) => String(row.department_id) === String(newDepartment.value))
-        : categories;
-      for (const row of filtered) {
-        newCategory.appendChild(h("option", { value: row.id, selected: String(row.id) === String(keep) }, row.name));
-      }
-    }
-    newDepartment.addEventListener("change", paintCategories);
-
-    function checkDuplicate() {
-      clear(duplicateHint);
+    const syncSelection = () => {
       const term = search.value.trim().toLowerCase();
       if (!term) return;
-      const match = products.find((row) => row.name.toLowerCase() === term
-        || (row.sku || "").toLowerCase() === term
-        || (row.barcode || "") === term);
-      if (!match) return;
-      duplicateHint.appendChild(alertBox(
-        h("div", { class: "col gap-1" },
-          h("div", {}, h("strong", {}, `${match.name} is already in your catalog.`),
-            ` ${fmtQty(match.stock_qty)} on hand${match.sku ? ` · ${match.sku}` : ""}. Add stock to it instead of creating a duplicate.`),
-          button("Add stock to this product", {
-            size: "sm",
-            variant: "soft",
-            icon: "plus",
-            onClick: () => {
-              mode = "existing";
-              renderMode();
-              productSelect.value = String(match.id);
-              search.value = match.name;
-              tooltipScroll();
-            },
-          })), "warning"));
-    }
-    function tooltipScroll() { /* keeps focus after mode switch */ }
-
-    search.addEventListener("input", checkDuplicate);
-    search.addEventListener("change", () => {
-      const term = search.value.trim().toLowerCase();
-      const match = products.find((row) => row.name.toLowerCase() === term
+      const match = state.products.find((row) => (row.name || "").toLowerCase() === term
         || (row.sku || "").toLowerCase() === term
         || (row.barcode || "") === term);
       if (match) productSelect.value = String(match.id);
-    });
+    };
+    search.addEventListener("input", syncSelection);
+    search.addEventListener("change", syncSelection);
 
-    function renderMode() {
-      clear(modeHost);
-      for (const [value, label, iconName] of [
-        ["existing", "Add to existing product", "plus"],
-        ["new", "New product", "box"],
-      ]) {
-        modeHost.appendChild(h("button", {
-          class: `segmented__item${mode === value ? " is-active" : ""}`,
-          type: "button",
-          onClick: () => {
-            mode = value;
-            renderMode();
-          },
-        }, icon(iconName), label));
-      }
-      existingHost.classList.toggle("hidden", mode !== "existing");
-      newHost.classList.toggle("hidden", mode !== "new");
-    }
-
-    existingHost.appendChild(field({ label: "Find product", control: search }));
-    existingHost.appendChild(field({ label: "Product", control: productSelect, required: true }));
-    existingHost.appendChild(formGrid([
-      field({ label: "Quantity received", control: quantity, required: true }),
-      field({ label: "Supplier", control: supplier }),
-      field({ label: "Buying price", control: buyingPrice, required: true,
-        hint: "What this delivery cost you — FIFO uses it for profit and stock value." }),
-      field({ label: "Selling price (optional update)", control: sellingPrice }),
-    ]));
-    existingHost.appendChild(formGrid([
-      field({ label: "Reference", control: reference }),
-      field({ label: "Note", control: note }),
-    ]));
-    existingHost.appendChild(formGrid(funding.fields));
-
-    newHost.appendChild(field({ label: "Product name", control: newName, required: true, hint: "Start typing - if it exists, we will offer to add stock instead." }));
-    newHost.appendChild(formGrid([
-      field({ label: "SKU", control: newSku }),
-      field({ label: "Barcode", control: newBarcode }),
-      field({ label: "Buying price", control: newBuying, required: true }),
-      field({ label: "Selling price", control: newSelling, required: true }),
-      field({ label: "Opening quantity", control: newQty }),
-      field({ label: "Low stock at", control: newThreshold }),
-      field({ label: "Department", control: newDepartment }),
-      field({ label: "Category", control: newCategory }),
-      field({ label: "Unit", control: newUnit }),
-    ]));
-    newHost.appendChild(formGrid(fundingNew.fields));
+    get("/company/suppliers").then((data) => {
+      for (const row of data.items || []) supplier.appendChild(h("option", { value: row.id }, row.name));
+    }).catch(() => {});
 
     async function submit() {
       clear(errorHost);
+      const qty = Number(quantity.value) || 0;
+      if (!productSelect.value) {
+        errorHost.appendChild(alertBox("Choose the product this stock belongs to.", "danger"));
+        productSelect.focus();
+        return;
+      }
+      if (qty <= 0) {
+        errorHost.appendChild(alertBox("Enter the quantity received.", "danger"));
+        quantity.focus();
+        return;
+      }
+      if (buyingPrice.value === "") {
+        errorHost.appendChild(alertBox("Enter the buying price for this delivery.", "danger"));
+        buyingPrice.focus();
+        return;
+      }
+      if (!funding.value()) {
+        errorHost.appendChild(alertBox("Tell us where the money came from - sales profit or external funds.", "danger"));
+        funding.picker.focus();
+        return;
+      }
       try {
-        if (mode === "existing") {
-          if (!productSelect.value) {
-            errorHost.appendChild(alertBox("Choose a product or create a new one.", "danger"));
-            return;
-          }
-          const qty = Number(quantity.value) || 0;
-          if (qty <= 0) {
-            errorHost.appendChild(alertBox("Enter the quantity received.", "danger"));
-            return;
-          }
-          if (buyingPrice.value === "") {
-            errorHost.appendChild(alertBox("Enter the buying price for this delivery.", "danger"));
-            buyingPrice.focus();
-            return;
-          }
-          if (!funding.value()) {
-            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
-            funding.picker.focus();
-            return;
-          }
-          await post(`/products/${productSelect.value}/stock`, {
-            mode: "delta",
-            qty,
-            reason: "receive",
-            supplier_id: supplier.value ? Number(supplier.value) : null,
-            reference: reference.value.trim(),
-            note: note.value.trim() || "Stock received",
-            buying_price: buyingPrice.value,
-            selling_price: sellingPrice.value !== "" ? sellingPrice.value : undefined,
-            funding_source: funding.value(),
-            funding_note: funding.noteValue(),
-          });
-          toast("Stock received.", "success");
-        } else {
-          if (!newName.value.trim() || !newSelling.value) {
-            errorHost.appendChild(alertBox("A new product needs a name and a selling price.", "danger"));
-            return;
-          }
-          if (!newBuying.value) {
-            errorHost.appendChild(alertBox("A new product needs its buying price.", "danger"));
-            newBuying.focus();
-            return;
-          }
-          if (!fundingNew.value()) {
-            errorHost.appendChild(alertBox("Tell us where the money came from — sales profit or external funds.", "danger"));
-            fundingNew.picker.focus();
-            return;
-          }
-          const { item } = await post("/products", {
-            name: newName.value.trim(),
-            sku: newSku.value.trim(),
-            barcode: newBarcode.value.trim(),
-            price: newSelling.value,
-            cost: newBuying.value,
-            stock_qty: Number(newQty.value) || 0,
-            low_stock_threshold: Number(newThreshold.value) || 0,
-            department_id: newDepartment.value ? Number(newDepartment.value) : null,
-            category_id: newCategory.value ? Number(newCategory.value) : null,
-            unit: newUnit.value.trim() || "unit",
-            icon: "box",
-            funding_source: fundingNew.value(),
-            funding_note: fundingNew.noteValue(),
-          });
-          toast(`${item.name} added to the catalog.`, "success");
-        }
+        await post(`/products/${productSelect.value}/stock`, {
+          mode: "delta",
+          qty,
+          reason: "receive",
+          supplier_id: supplier.value ? Number(supplier.value) : null,
+          reference: reference.value.trim(),
+          note: note.value.trim() || "Stock received",
+          buying_price: buyingPrice.value,
+          selling_price: sellingPrice.value !== "" ? sellingPrice.value : undefined,
+          funding_source: funding.value(),
+          funding_note: funding.noteValue(),
+        });
+        toast("Stock received.", "success");
         instance.close();
         await loadProducts();
         if (state.tab === "movements") loadMovements();
@@ -731,15 +535,31 @@ export default async function inventoryView(ctx) {
       }
     }
 
-    renderMode();
-    loadMeta();
-
     const instance = modal({
       title: "Receive stock",
-      subtitle: "Bring new stock in, or add to something you already sell",
+      subtitle: "Add a delivery to a product you already sell",
       size: "md",
-      body: h("div", { class: "col gap-3" }, errorHost, modeHost, duplicateHint, existingHost, newHost, suggestionList),
-      footer: [button("Cancel", { onClick: () => instance.close() }), button("Receive stock", { variant: "primary", icon: "plus", onClick: submit })],
+      body: h("div", { class: "col gap-3" }, errorHost,
+        field({ label: "Find product", control: search, hint: "Type a name, SKU or barcode - the match is selected for you." }),
+        field({ label: "Product", control: productSelect, required: true }),
+        formGrid([
+          field({ label: "Quantity received", control: quantity, required: true }),
+          field({ label: "Supplier", control: supplier }),
+          field({ label: "Buying price", control: buyingPrice, required: true,
+            hint: "What this delivery cost you - FIFO uses it for profit and stock value." }),
+          field({ label: "Selling price (optional update)", control: sellingPrice }),
+        ]),
+        formGrid([field({ label: "Reference", control: reference }), field({ label: "Note", control: note })]),
+        formGrid(funding.fields),
+        h("div", { class: "flex items-center gap-2 small dim" },
+          h("span", {}, "Selling something new?"),
+          button("Create a product", { size: "sm", variant: "ghost", icon: "box", onClick: () => {
+            instance.close();
+            openCreateProduct();
+          } })),
+        suggestionList),
+      footer: [button("Cancel", { onClick: () => instance.close() }),
+        button("Receive stock", { variant: "primary", icon: "plus", onClick: submit })],
     });
   }
 

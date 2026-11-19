@@ -197,6 +197,7 @@ class User(TimestampMixin, Base):
     phone = db.Column(db.String(40), default="")
     status = db.Column(db.String(20), default="active", nullable=False)  # active|invited|disabled
     is_developer = db.Column(db.Boolean, default=False, nullable=False)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
     pin_hash = db.Column(db.String(255))
     avatar_color = db.Column(db.String(20), default="#5b5bd6")
     last_login_at = db.Column(db.DateTime)
@@ -276,6 +277,7 @@ class User(TimestampMixin, Base):
             "status": self.status,
             "is_developer": self.is_developer,
             "pin_enabled": bool(self.pin_hash),
+            "must_change_password": bool(self.must_change_password),
             "avatar_color": self.avatar_color,
             "initials": self.display_initial,
             "role_id": self.role_id,
@@ -578,6 +580,7 @@ class Category(TimestampMixin, Base):
     department_id = db.Column(db.Integer, db.ForeignKey("departments.id", ondelete="SET NULL"), index=True)
     name = db.Column(db.String(80), nullable=False)
     color = db.Column(db.String(20), default="#5b5bd6")
+    icon = db.Column(db.String(40), default="tag")
     sort_order = db.Column(db.Integer, default=100, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 
@@ -589,6 +592,7 @@ class Category(TimestampMixin, Base):
             "id": self.id,
             "name": self.name,
             "color": self.color,
+            "icon": self.icon or "tag",
             "department_id": self.department_id,
             "department": self.department.name if self.department else None,
             "sort_order": self.sort_order,

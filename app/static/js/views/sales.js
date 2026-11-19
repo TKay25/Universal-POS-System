@@ -165,12 +165,12 @@ export default async function salesView(ctx) {
               h("div", { class: "strong mono" }, row.number),
               h("div", { class: "tiny dim" }, dateTime(row.created_at))),
           },
-          { key: "customer", label: "Customer", render: (row) => h("div", {}, h("div", {}, row.customer), h("div", { class: "tiny dim" }, row.cashier)) },
+          { key: "customer", label: "Customer", priority: "low", render: (row) => h("div", {}, h("div", {}, row.customer), h("div", { class: "tiny dim" }, row.cashier)) },
           {
             key: "payment_methods", label: "Payment",
             render: (row) => h("div", { class: "flex gap-1 wrap" }, (row.payment_methods || []).map((method) => badge(method))),
           },
-          { key: "item_count", label: "Items", align: "right", render: (row) => number(row.item_count, 0) },
+          { key: "item_count", label: "Items", align: "right", priority: "low", render: (row) => number(row.item_count, 0) },
           { key: "status", label: "Status", render: (row) => statusBadge(row.status) },
           {
             key: "total_cents", label: "Total", align: "right",

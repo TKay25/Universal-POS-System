@@ -200,6 +200,7 @@ def _make_catalog(company: Company, products: list[tuple], tax: TaxRate) -> list
                 name=category_name,
                 department=departments[department_name],
                 color=DEPARTMENT_COLORS.get(department_name, "#5b5bd6"),
+                icon=spec[5],
                 sort_order=index * 10,
             )
             db.session.add(category)

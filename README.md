@@ -34,8 +34,11 @@ POS_DATABASE_URL=postgresql://user:password@host/database
 
 `POS_DATABASE_URL` (or `DATABASE_URL`) wins; without it the app falls back to
 `instance/universal_pos.db`. Tables are created on boot and demo data is seeded when
-`POS_SEED_DEMO=true` and the database is empty. Delete the SQLite file (or drop the
-Postgres tables) to reseed.
+`POS_SEED_DEMO=true` and the database is empty. Columns added after the first release are
+applied automatically too — `app/schema.py` inspects each table and runs an idempotent
+`ALTER TABLE … ADD COLUMN` for anything missing (for example `categories.icon` and
+`users.must_change_password`), so existing Postgres databases upgrade themselves on the next
+boot. Delete the SQLite file (or drop the Postgres tables) to reseed.
 
 #### Connection tuning (`app/dbhelper.py`)
 
@@ -170,6 +173,9 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
 
 ### Demo logins
 
+Seeded only when `POS_SEED_DEMO=1` (the default for local runs). The sign-in screen no longer
+lists them — use this table instead.
+
 | Role | Email | Password |
 | --- | --- | --- |
 | Developer (platform) | `developer@universalpos.dev` | `DevAdmin!2024` |
@@ -193,9 +199,24 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
   Solar; Hardware → Power Tools / DIY / Plumbing / Machinery. Department filters drive the
   till grid. Any product can be re-filed from the row menu (**Move to department /
   category**) without touching its prices, stock or sales history.
+- **Categories own the tile look** — a category carries an icon and colour, set when you
+  create or edit it (from Inventory → Categories or Departments → Add category). Products in
+  that category inherit both, so the product form only shows a one-line tile preview with a
+  **Change tile** disclosure for the rare product that needs its own look. Re-filing a product
+  into another category re-skins it automatically, restyling a category re-skins the products
+  that still wear its old tile (custom tiles are left alone), and categories created before
+  icons existed are backfilled from the icons their products already use.
 - **Roles & permissions** — the first user of a company becomes **Administrator**. Admins
   appoint staff, add/remove ordinary users, edit stock and settings. Administrators cannot
   remove other administrators; only platform staff can.
+- **Inviting a teammate** — Settings → Team → *Add teammate* asks only for name, email and
+  role. Emails are unique across the whole platform, so inviting an address that already has
+  an account (in this workspace or another) is refused with a clear message instead of
+  creating a second login. The API generates a short, unambiguous **temporary password**
+  (`Up-…`) and shows it once with a copy button; the teammate signs in with it and must
+  choose their own password before the workspace opens. *Reset password* re-issues a
+  temporary password the same way, and any password an admin sets is treated as temporary
+  too. The new column is added on boot by `app/schema.py`.
 - **Custom fields, promotions, payment methods** (Cash, EcoCash, Bank Transfer, Card by
   default), taxes, receipt designer and custom workspaces.
 
@@ -215,17 +236,21 @@ this code fixes it without touching the environment. (If you ever *want* psycopg
   the shelf as a fresh layer at the cost they left at. Stock that pre-dates FIFO gets an
   opening layer at its recorded buying price automatically on boot.
 - **Buying price is asked for whenever stock comes in** — Receive stock and the Add side of
-  Adjust stock both require it, and the API refuses a receipt without one. Inventory shows
+  Change stock both require it, and the API refuses a receipt without one. Inventory shows
   **Stock value (FIFO)** next to each product.
 - **Where the money came from** — every purchase also records its **funding source**:
   *profits from sales* or *external funds* (owner capital, a loan, an investor). Inventory's
   **Stock funding** card shows the split, the amount behind each source and the latest
   purchases, so a manager can see how much of the shelf the business funded itself.
 - **Buying price vs selling price** are tracked separately on every product.
-- **Receive stock** supports existing products (updating buying/selling price) and new
-  products with SKU, barcode, prices and opening stock. Name suggestions and duplicate
-  SKU/barcode guards prevent split records. Each row has **+** (receive) and **−** (remove)
-  actions.
+- **Inventory is the catalog** — the Products tab folded into Inventory: the Stock levels
+  table carries **Edit**, **Add stock**, **Remove stock** and a **More** menu (move to another
+  department/category, print label, duplicate, archive, delete), and the page header carries
+  **Add product**, **Categories** and **Export**. Old `#/products` links land on Inventory.
+- **Receive stock** adds a delivery to a product you already sell (updating buying/selling
+  price); **Create a product** next door handles brand-new items, and its name field lists
+  matching products as you type so you can add stock to an existing record instead of
+  duplicating it. Duplicate SKU/barcode guards back this up on the API.
 - **Bulk tools** (Inventory → Bulk tools) download an Excel-compatible CSV template,
   upload a filled sheet (existing SKUs/barcodes update, new ones are created), and audit a
   stock-count sheet against the system with a preview before applying variances. Imports and
@@ -293,20 +318,34 @@ shows each parked cart's lines and value so it can be resumed and charged later.
 
 ### Workspace ergonomics
 
-- **Collapsible sidebar** — on a PC the sidebar is an icon rail that expands when you hover
-  it; the pin button at the right of the top bar keeps it open (or collapses it again), and
-  the choice is remembered per browser. Tablets get the same rail with the pin button.
-- **Search everywhere** — Products, Sales, Customers, Lay-bys, Departments (departments and
+- **Collapsible sidebar** — on a PC the sidebar collapses to a 74px icon rail; hovering the
+  rail expands it over the content (so nothing shifts), and the pin button in the top bar
+  keeps it open or collapses it again. The choice is remembered per account and per browser.
+  Tablets get the same pin, the expanded width narrows to 196px below 900px so tables still
+  fit, and in the full app on a phone the sidebar becomes an off-canvas drawer with a
+  backdrop behind the hamburger button.
+- **Search everywhere** — Sales, Customers, Lay-bys, Departments (departments and
   categories), Inventory (stock levels, movements by product/reference/reason, suppliers),
   Cash drawer (cashier/till), Activity log, Settings and every phone-app list all have a
   search box. Typing shows an inline spinner in the box until the results land.
 - **Custom date ranges** — every period control also accepts an explicit window: Reports and
   Sales have From/To pickers next to the shortcuts, and the phone app adds a **Custom** chip
-  with From/To dates that drives all of its tabs.
-- **Adjust stock in tabs** — the adjust-stock dialog separates **Add / remove** (with an
-  add/remove direction toggle) from **Set exact** (counted quantity), each with its own
-  reason and note. Stock-level rows carry `+` (receive), `−` (remove) and edit actions, and
-  the table lists each product's **department** alongside its category.
+  with From/To dates that drives all of its tabs. Every screen — dashboard cockpit, reports,
+  sales, phone app — opens on **Today**, and the dashboard adds a *Management period* chip
+  row (Today / 7 / 30 / 90 days) for widening the secondary panels without leaving the page.
+- **Change stock in three separate tabs** — **Add stock** (quantity, buying price, funding
+  source, note), **Remove stock** (quantity, reason such as wastage or returns, note) and
+  **Set exact** (counted quantity, buying price and funding only when the count adds units).
+  There is no shared add/remove toggle: each tab asks only for what it needs. Stock-level rows
+  carry `+` (add), `−` (remove), edit and a **More** menu, and the category cell lists the
+  product's **department** underneath its category.
+- **Responsive by design** — the shell is a sidebar + tab workspace down to 820px and a
+  dedicated phone app (Home / Sales / Reports / Stock / Activity) below that. Wide tables drop
+  their lowest-priority columns on tablets (department, low-at, cost and stock value fold into
+  the product and category cells) and keep the row actions pinned to the right edge, so
+  nothing important ever scrolls out of reach. The expanded sidebar narrows itself under
+  900px so tables still fit. Product-name suggestions, tile previews and the three stock tabs
+  all reflow to a single column on a phone.
 
 ### Loading feedback
 
@@ -319,10 +358,12 @@ until the request finishes or an error appears.
 On screens up to 820 px wide the app switches to a phone shell: an app bar with the company
 and a live clock, a **period selector pinned above everything** (Today / 7 days / 30 days /
 90 days) and five bottom tabs — **Home, Sales, Reports, Stock, Activity**. Every tab follows
-the selected period; tabs a role cannot see are hidden.
+the selected period and always opens on **Today**; tabs a role cannot see are hidden.
 
-- **Home** — period sales, profit and margin, the revenue/profit trend, **by branch** and
-  **by department** summary tables, payment mix and stock alerts.
+- **Home** — period sales, profit and margin, then a **management summary card** right above
+  the chart: one headline comparing the period with the one before it plus two short actions
+  (margin, restocking, branch or department focus). Below it: the revenue/profit trend,
+  **by branch** and **by department** summary tables, payment mix and stock alerts.
 - **Sales** — the transaction history for the period with search and *Load more*; tap a
   receipt to open the full sale and **print the receipt**.
 - **Reports** — one-tap PDF/CSV downloads for Summary, Sales, Products, Low stock, Inventory
@@ -330,7 +371,8 @@ the selected period; tabs a role cannot see are hidden.
 - **Stock** — everything at or below its low-stock point, with suggested order quantities.
 - **Activity** — the workspace audit feed.
 - Powered by `GET /api/reports/mobile` (six targeted queries, cached like the rest of the
-  report family).
+  report family). The payload carries `advice` (tone, headline and up to two action lines)
+  computed from the previous-period comparison, margin, stock alerts and branch spread.
 - **Full app on this device** in the account menu opts out and restores the complete
   workspace for that browser; on the way back, **Phone dashboard** in the topbar account
   menu returns. With the opt-out active on a small screen the sidebar becomes an off-canvas

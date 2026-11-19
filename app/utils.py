@@ -263,3 +263,13 @@ def count_of(model, company_id: int, *filters):
     from app.extensions import db
 
     return db.session.execute(stmt).scalar_one()
+
+
+# Ambiguous characters (0/o, 1/l/i) make a password read aloud over the phone risky.
+TEMP_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+
+
+def generate_temp_password(length: int = 10) -> str:
+    """A short, unambiguous password an administrator can hand over once."""
+    body = "".join(secrets.choice(TEMP_PASSWORD_ALPHABET) for _ in range(max(6, length)))
+    return f"Up-{body}"

@@ -2,7 +2,7 @@
 
 import { h, clear } from "../core/dom.js";
 import { icon, productIcon } from "../core/icons.js";
-import { money, number, date, isoDay, addDays, rangeFromPreset } from "../core/fmt.js";
+import { money, number, date, isoDay, addDays } from "../core/fmt.js";
 import { get, post } from "../core/http.js";
 import { settings, preferences, hasPerm, moduleOn, currentUser, companyName } from "../core/store.js";
 import { branchQuery, branchScope } from "../core/branch.js";
@@ -24,9 +24,14 @@ export default async function dashboardView(ctx) {
   let onboarding = null;
   let insights = null;
   let loadedAt = 0;
+  /* The cockpit and insights default to today, like every other screen. */
+  let presetDays = 0;
+  const PRESETS = [["Today", 0], ["7 days", 6], ["30 days", 29], ["90 days", 89]];
+
+  const currentRange = () => ({ from: isoDay(addDays(-presetDays)), to: isoDay() });
 
   async function load() {
-    const range = rangeFromPreset("30d", 29);
+    const range = currentRange();
     const canReport = hasPerm("reports.view");
     const scope = branchQuery();
     const [dashboardData, overviewData] = await Promise.all([
@@ -52,6 +57,34 @@ export default async function dashboardView(ctx) {
     const scrollTop = scroller?.scrollTop || 0;
     render();
     if (scroller) scroller.scrollTop = scrollTop;
+  }
+
+  async function setPreset(days) {
+    if (presetDays === days) return;
+    presetDays = days;
+    const range = currentRange();
+    const scope = branchQuery();
+    render();
+    const [overviewData, insightsData] = await Promise.all([
+      get("/reports/overview", { ...range, ...scope }).catch(() => null),
+      get("/reports/insights", { ...range, ...scope }).catch(() => null),
+    ]);
+    if (overviewData) overview = overviewData;
+    if (insightsData) insights = insightsData;
+    const scroller = el.closest(".view");
+    const scrollTop = scroller?.scrollTop || 0;
+    render();
+    if (scroller) scroller.scrollTop = scrollTop;
+  }
+
+  function periodChips() {
+    return h("div", { class: "chips mb-3" },
+      h("span", { class: "tiny dim", style: { alignSelf: "center", marginRight: "4px" } }, "Management period"),
+      PRESETS.map(([label, days]) => h("button", {
+        class: `chip${presetDays === days ? " is-active" : ""}`,
+        type: "button",
+        onClick: () => setPreset(days),
+      }, label)));
   }
 
   function greeting() {
@@ -87,6 +120,8 @@ export default async function dashboardView(ctx) {
     if (onboarding && !onboarding.dismissed && onboarding.completed < onboarding.total) {
       el.appendChild(renderOnboarding(onboarding));
     }
+
+    if (hasPerm("reports.view")) el.appendChild(periodChips());
 
     for (const announcement of today.announcements || []) {
       el.appendChild(h("div", { class: "banner-stack" }, alertBox(announcement.title, announcement.level === "critical" ? "danger" : announcement.level === "warning" ? "warning" : "info")));
