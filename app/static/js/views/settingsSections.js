@@ -247,7 +247,7 @@ SECTION_RENDERERS.preferences = async (host) => {
 /* ------------------------------------------------------------------------- */
 /* General                                                                    */
 /* ------------------------------------------------------------------------- */
-SECTION_RENDERERS.general = async (host) => {
+SECTION_RENDERERS.general = async (host, { refresh } = {}) => {
   const company = currentCompany();
   const cfg = settings();
   const name = textInput({ value: company.name });
@@ -279,11 +279,66 @@ SECTION_RENDERERS.general = async (host) => {
   const city = textInput({ value: business.city || "" });
   const country = textInput({ value: business.country || "" });
 
+  // Every workspace ships with VAT 15.5%; show the live default next to the VAT number.
+  let defaultTax = null;
+  try {
+    const taxes = await get("/company/taxes");
+    const rows = taxes.items || [];
+    defaultTax = rows.find((row) => row.is_default) || rows[0] || null;
+  } catch { /* the card still renders without the rate */ }
+
+  const branding = cfg.branding || {};
+  const logoData = branding.logo_data_url || "";
+  const logoFile = h("input", { type: "file", accept: "image/png,image/jpeg,image/svg+xml,image/webp", class: "hidden" });
+  const publishLogo = async (dataUrl) => {
+    await saveSettings({ branding: { logo_data_url: dataUrl } },
+      dataUrl ? "Logo saved — it is live across the app." : "Logo removed.");
+    // Re-render the card from the saved settings so the state, preview and
+    // buttons can never disagree with what the sidebar is showing.
+    if (refresh) refresh();
+  };
+  logoFile.addEventListener("change", () => {
+    const file = logoFile.files?.[0];
+    if (!file) return;
+    if (file.size > 300 * 1024) {
+      toast("Please choose an image under 300 KB.", "warning");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => publishLogo(String(reader.result)).catch((error) => toast(error.message, "error"));
+    reader.readAsDataURL(file);
+  });
+
+  host.appendChild(card("Company logo", "Shown in the sidebar, the phone app bar, receipts, PDF exports and the reports header",
+    h("div", { class: "flex items-center gap-3 wrap" },
+      h("div", { class: "logo-pick" },
+        logoData
+          ? h("img", { src: logoData, alt: `${company.name} logo` })
+          : document.createTextNode((company.name || "UP").slice(0, 2).toUpperCase())),
+      h("div", { class: "grow", style: { minWidth: "180px" } },
+        h("div", { class: "strong small" }, logoData ? "Logo uploaded" : "No logo yet"),
+        h("div", { class: "tiny dim" }, "PNG, JPG, SVG or WebP up to 300 KB — a square image looks best.")),
+      h("div", { class: "flex gap-2" },
+        button(logoData ? "Replace logo" : "Upload logo", {
+          size: "sm", variant: "primary", icon: "upload", onClick: () => logoFile.click(),
+        }),
+        logoData
+          ? button("Remove", {
+            size: "sm", variant: "ghost",
+            onClick: () => publishLogo("").catch((error) => toast(error.message, "error")),
+          })
+          : null),
+      logoFile)));
+
   host.appendChild(card("Workspace", "How this company appears across the platform",
     h("div", { class: "col gap-4" },
       formGrid([
         field({ label: "Workspace name", control: name, required: true }),
-        field({ label: "Contact email", control: contact }),
+        field({
+          label: "Contact email",
+          control: contact,
+          hint: "Workspace address for notifications. It can be your sign-in email.",
+        }),
         field({ label: "Timezone", control: timezone, hint: "IANA name, e.g. Africa/Harare" }),
       ]),
       h("div", { class: "flex justify-end" }, saveButton("Save workspace", async () => {
@@ -321,12 +376,20 @@ SECTION_RENDERERS.general = async (host) => {
         field({ label: "Company registration number", control: companyRegNumber, hint: "Registrar of Companies number" }),
         field({ label: "Phone", control: phone }),
         field({ label: "WhatsApp", control: whatsapp, hint: "For the 6pm executive summary. Include the country code." }),
-        field({ label: "Email", control: email }),
+        field({ label: "Email", control: email, hint: "Printed on receipts, invoices and reports." }),
         field({ label: "Website", control: website }),
         field({ label: "City", control: city }),
         field({ label: "Country", control: country }),
         field({ label: "Address", control: address, span: true }),
       ]),
+      h("div", { class: "flex items-center gap-2 wrap tiny" },
+        icon("percent"),
+        h("span", { class: "dim" }, "Default VAT"),
+        h("strong", {}, defaultTax ? `${Number(defaultTax.rate.toFixed(2))}%` : "not set"),
+        h("span", { class: "dim" },
+          defaultTax
+            ? `${defaultTax.name} · new products start on this rate`
+            : "Add a rate under Tax rates.")),
       h("div", { class: "flex justify-end" }, saveButton("Save business details", () => saveSettings({
         business: {
           legal_name: legalName.value.trim(), tax_number: taxNumber.value.trim(),
@@ -346,7 +409,7 @@ SECTION_RENDERERS.branding = async (host) => {
   let primary = cfg.primary || "#5b5bd6";
   let accent = cfg.accent || "#22d3ee";
   let logoData = cfg.logo_data_url || "";
-  const logoText = textInput({ value: cfg.logo_text || companyName() });
+  const logoText = textInput({ value: cfg.logo_text_custom ? cfg.logo_text : companyName() });
   const radius = textInput({ type: "number", min: "0", max: "32", value: String(cfg.radius ?? 14) });
   const theme = select({ value: cfg.theme || "light", options: [{ value: "light", label: "Light" }, { value: "dark", label: "Dark" }] });
   const density = select({ value: cfg.density || "comfortable", options: [{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }] });
@@ -425,7 +488,10 @@ SECTION_RENDERERS.branding = async (host) => {
         button("Remove logo", { variant: "ghost", onClick: () => { logoData = ""; renderPreview(); toast("Logo will be cleared when you save.", "info"); } }),
         saveButton("Save branding", () => saveSettings({
           branding: {
+            // Typing a wordmark marks it custom; clearing it hands the label back
+            // to the workspace name so later renames still show up.
             logo_text: logoText.value.trim(),
+            logo_text_custom: Boolean(logoText.value.trim()),
             logo_data_url: logoData,
             primary,
             accent,
@@ -537,8 +603,8 @@ SECTION_RENDERERS.taxes = async (host) => {
   }
 
   function openForm(tax = null) {
-    const name = textInput({ value: tax?.name || "", placeholder: "e.g. VAT 15%" });
-    const rate = textInput({ type: "number", step: "0.01", min: "0", max: "100", value: tax ? String(tax.rate) : "" });
+    const name = textInput({ value: tax?.name || "", placeholder: "e.g. VAT 15.5%" });
+    const rate = textInput({ type: "number", step: "0.01", min: "0", max: "100", value: tax ? String(tax.rate) : "15.5" });
     const isDefault = switchControl({ checked: Boolean(tax?.is_default), label: "Default rate for new products" });
     const inclusive = switchControl({ checked: Boolean(tax?.is_inclusive), label: "Product prices already include this tax" });
     const errorHost = h("div");

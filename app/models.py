@@ -71,6 +71,19 @@ class Company(TimestampMixin, Base):
         self.settings_json = deep_merge(self.settings_json or {}, patch)
         return self.settings
 
+    @property
+    def wordmark(self) -> str:
+        """What the sidebar, receipts and browser title call this workspace.
+
+        A wordmark typed in Branding wins; otherwise the workspace name follows
+        every rename instead of leaving an old name on screen.
+        """
+        branding = (self.settings or {}).get("branding") or {}
+        custom = " ".join(str(branding.get("logo_text") or "").split())
+        if branding.get("logo_text_custom") and custom:
+            return custom
+        return (self.name or "").strip()
+
     # ---- modules --------------------------------------------------------- #
     @property
     def module_state(self) -> dict[str, dict]:

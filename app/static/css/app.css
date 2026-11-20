@@ -2011,6 +2011,24 @@ html[data-overlay] .auth { overflow: hidden; }
 .mval { font-variant-numeric: tabular-nums; }
 .mval--good { color: var(--success); }
 
+/* Company logo picker (Settings → General) and the sidebar-style preview. */
+.logo-pick {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 15px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+.logo-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 .mhero {
   padding: 16px;
   background: linear-gradient(150deg, color-mix(in srgb, var(--primary) 15%, var(--surface)), var(--surface) 72%);

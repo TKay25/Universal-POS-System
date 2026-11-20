@@ -434,6 +434,7 @@ def seed_all(app) -> dict:
         settings_json={
             "branding": {
                 "logo_text": "Aurora Coffee",
+                "logo_text_custom": True,
                 "primary": "#b45309",
                 "accent": "#f59e0b",
                 "theme": "light",
@@ -447,8 +448,8 @@ def seed_all(app) -> dict:
 
     aurora_setup = _make_config(
         aurora,
-        tax_name="VAT 15%",
-        tax_rate=15.0,
+        tax_name="VAT 15.5%",
+        tax_rate=15.5,
         currency={"code": "USD", "symbol": "$", "position": "before", "decimals": 2},
         tax_number="VAT-4820193",
         company_reg_number="CR-2019/12345",
@@ -522,6 +523,7 @@ def seed_all(app) -> dict:
         settings_json={
             "branding": {
                 "logo_text": "Nova Home & Tech",
+                "logo_text_custom": True,
                 "primary": "#4338ca",
                 "accent": "#22d3ee",
                 "theme": "dark",
@@ -535,8 +537,8 @@ def seed_all(app) -> dict:
 
     nova_setup = _make_config(
         nova,
-        tax_name="VAT 15%",
-        tax_rate=15.0,
+        tax_name="VAT 15.5%",
+        tax_rate=15.5,
         currency={"code": "USD", "symbol": "$", "position": "before", "decimals": 2},
         tax_number="VAT-7710455",
         company_reg_number="CR-2021/09876",

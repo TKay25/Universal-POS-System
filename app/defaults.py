@@ -77,6 +77,8 @@ DEFAULT_SETTINGS: dict = {
     },
     "branding": {
         "logo_text": "",
+        # A wordmark the owner typed in Branding; otherwise the workspace name shows.
+        "logo_text_custom": False,
         "logo_data_url": "",
         "primary": "#5b5bd6",
         "accent": "#22d3ee",

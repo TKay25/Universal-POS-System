@@ -80,6 +80,35 @@ def test_self_service_signup_creates_workspace(client):
     assert payload["user"]["role"] == "Administrator"
     assert payload["modules"]["pos"]["enabled"] is True
 
+    # Sign-in email stays private unless the owner says it is the company email.
+    settings = payload["company"]["settings"]
+    assert payload["company"]["contact_email"] == ""
+    assert settings["business"]["email"] == ""
+
+    # Every new workspace starts with Zimbabwe's VAT 15.5% already set up as the
+    # default rate (assigned to products, not force-applied to untaxed ones).
+    headers = {"X-CSRF-Token": payload["csrf_token"]}
+    taxes = client.get("/api/company/taxes", headers=headers).get_json()["items"]
+    assert [(row["name"], row["rate"], row["is_default"]) for row in taxes] == [("VAT 15.5%", 15.5, True)]
+
+
+def test_signup_can_reuse_the_login_email_as_the_company_email(client):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "company_name": "Shared Mail Traders",
+            "full_name": "Same Mail",
+            "email": "shop@signup.test",
+            "password": "Password!123",
+            "email_is_company_email": True,
+        },
+        headers={"X-CSRF-Token": csrf(client)},
+    )
+    assert response.status_code == 201, response.get_json()
+    company = response.get_json()["company"]
+    assert company["contact_email"] == "shop@signup.test"
+    assert company["settings"]["business"]["email"] == "shop@signup.test"
+
 
 def test_developer_cannot_use_tenant_endpoints(client, developer_headers):
     response = client.get("/api/products", headers=developer_headers)

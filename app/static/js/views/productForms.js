@@ -2,7 +2,7 @@
 
 import { h, clear, debounce } from "../core/dom.js";
 import { icon, productIcon, PRODUCT_ICON_NAMES } from "../core/icons.js";
-import { money, number, qty as fmtQty } from "../core/fmt.js";
+import { money, qty as fmtQty } from "../core/fmt.js";
 import { get, post, patch, del } from "../core/http.js";
 import { currency, moduleOn } from "../core/store.js";
 import { requireBranchAction } from "../core/branch.js";
@@ -107,9 +107,12 @@ export function openProductForm({
       category.appendChild(h("option", { value: row.id, selected: String(row.id) === String(keep) }, row.name));
     }
   });
+  // New products start on the workspace's default rate (VAT 15.5% for a fresh
+  // workspace); editing keeps whatever the product already uses.
+  const defaultTax = taxes.find((t) => t.is_default);
   const tax = select({
-    value: product?.tax_rate_id || "",
-    options: [{ value: "", label: "No tax / use default" }, ...taxes.map((t) => ({ value: t.id, label: `${t.name} (${number(t.rate, 0)}%)` }))],
+    value: product ? (product.tax_rate_id || "") : (defaultTax ? String(defaultTax.id) : ""),
+    options: [{ value: "", label: "No tax" }, ...taxes.map((t) => ({ value: t.id, label: `${t.name} (${Number(t.rate.toFixed(2))}%)` }))],
   });
   const price = moneyInput({ value: product ? (product.price_cents / 100).toFixed(2) : "" });
   const cost = moneyInput({ value: product ? (product.cost_cents / 100).toFixed(2) : "" });

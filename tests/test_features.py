@@ -67,6 +67,46 @@ def test_partial_product_update_keeps_untouched_fields(client, owner):
     assert cleared.get_json()["item"]["stock_qty"] == 7
 
 
+def test_renaming_the_workspace_moves_the_sidebar_wordmark(client, owner, app):
+    """The label above the nav is the workspace name until a custom wordmark is set."""
+    headers = owner["headers"]
+    renamed = client.patch(
+        "/api/company/profile",
+        json={"name": "SKS Hardware & Motor Spares", "contact_email": "", "timezone": "Africa/Harare"},
+        headers=headers,
+    )
+    assert renamed.status_code == 200, renamed.get_json()
+    branding = client.get("/api/company/settings", headers=headers).get_json()["settings"]["branding"]
+    assert branding["logo_text"] == "SKS Hardware & Motor Spares"
+    assert branding["logo_text_custom"] is False
+
+    with app.app_context():
+        from app.models import Company
+
+        assert Company.query.filter_by(name="SKS Hardware & Motor Spares").first().wordmark == (
+            "SKS Hardware & Motor Spares"
+        )
+
+    # A wordmark typed in Branding is the owner's choice and survives renames.
+    saved = client.patch(
+        "/api/company/settings",
+        json={"branding": {"logo_text": "SKS", "logo_text_custom": True}},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.get_json()
+    assert client.patch(
+        "/api/company/profile",
+        json={"name": "SKS Wholesale", "contact_email": "", "timezone": "Africa/Harare"},
+        headers=headers,
+    ).status_code == 200
+    branding = client.get("/api/company/settings", headers=headers).get_json()["settings"]["branding"]
+    assert branding["logo_text"] == "SKS"
+    with app.app_context():
+        from app.models import Company
+
+        assert Company.query.filter_by(name="SKS Wholesale").first().wordmark == "SKS"
+
+
 def test_stock_funding_records_profit_versus_external_money(client, owner):
     headers = owner["headers"]
     product = make_product(client, headers, stock_qty=0, cost="80.00")

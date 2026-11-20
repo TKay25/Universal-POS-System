@@ -192,7 +192,13 @@ lists them — use this table instead.
   tips, service charge, multi-branch, custom workspaces, price overrides, …) each with a
   schema-driven config form in Settings → Modules.
 - **Branding & business details** — name, logo text/colour, theme, VAT registration number
-  and company registration number (Zimbabwe), receipt templates.
+  and company registration number (Zimbabwe), receipt templates. **Company logo** upload
+  lives at the top of Settings → General (and in Branding): one image, published immediately
+  and used by the sidebar, the phone app bar, receipts, PDF exports and the reports header.
+  The label above the nav,
+  the phone app bar, receipts and the window title all use the **workspace name** until you
+  type your own wordmark in Branding (`logo_text_custom`), so renaming the workspace never
+  leaves the old name on screen — and a wordmark you *did* type is never overwritten.
 - **Branches & tills** — unlimited branches per company, multiple tills per branch. The POS
   branch switcher records `location_id`/`register_id` on every sale and shift. The topbar
   switcher is global: choose one branch for selling, or **All branches** for a combined,
@@ -227,7 +233,15 @@ lists them — use this table instead.
 ## Zimbabwe specifics
 
 - All timestamps are stored in UTC and displayed/reported in **Africa/Harare** (CAT, UTC+2).
-- Company setup captures company name, logo, **VAT registration number** and **company
+- **VAT 15.5% is the default rate.** Every new workspace is provisioned with a `VAT 15.5%`
+  tax rate marked as the default, the "New tax rate" form pre-fills 15.5%, and new products
+  start on that rate (existing products and imports keep whatever rate they already have).
+  Settings → General shows the live default next to the VAT registration number.
+- **Self-service signup** asks for company name, your name, work email, password and
+  WhatsApp, plus a **"Is this email the company email too?"** Yes/No toggle (default **No**).
+  *No* keeps the sign-in address private — company contact email and the receipt email start
+  blank and are filled in later under Settings → General; *Yes* uses the same address for
+  both. Company setup also captures the **VAT registration number** and **company
   registration number**; both print on receipts when present.
 - Receipts carry a Code 128 barcode (pure Python, no native deps).
 

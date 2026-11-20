@@ -125,6 +125,12 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       placeholder: "+263 77 123 4567",
       attrs: { inputmode: "tel", autocomplete: "tel", required: "required" },
     });
+    // Off by default: the sign-in address only becomes the company address on request.
+    let emailIsCompanyEmail = "no";
+    const emailToggle = segmented(
+      [{ value: "no", label: "No" }, { value: "yes", label: "Yes" }],
+      { value: "no", size: "sm", onChange: (value) => { emailIsCompanyEmail = value; } },
+    );
 
     const submit = button("Create my workspace", { variant: "primary", size: "lg", block: true, type: "submit" });
 
@@ -146,6 +152,7 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
             vat_number: vat.value.trim(),
             company_reg_number: companyReg.value.trim(),
             whatsapp_number: whatsapp.value.trim(),
+            email_is_company_email: emailIsCompanyEmail === "yes",
           });
           store.set({ session, csrf: session.csrf_token });
           applyBranding();
@@ -164,8 +171,13 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
       field({ label: "Work email", control: email }),
       field({ label: "Password", control: password, hint: "Minimum 8 characters." }),
       field({ label: "Currency", control: currency }),
-      field({ label: "VAT registration number", control: vat }),
+      field({ label: "VAT registration number", control: vat, hint: "We set up VAT 15.5% for you — change it later in Tax rates." }),
     ]),
+    field({
+      label: "Is this email the company email too?",
+      control: emailToggle,
+      hint: "No keeps your sign-in address private; receipts and reports stay blank until you add one in Settings → General.",
+    }),
     field({ label: "Company registration number", control: companyReg }),
     field({
       label: "WhatsApp number",

@@ -250,7 +250,7 @@ def render_receipt(company, sale, *, auto_print: bool = False) -> str:
     show_tax = company.module_config("tax_engine").get("show_breakdown", True)
 
     logo_url = branding.get("logo_data_url") or ""
-    logotype = branding.get("logo_text") or company.name
+    logotype = company.wordmark
     location_line = ""
     if company.module_enabled("multi_location") and company.module_config("multi_location").get(
         "show_location_on_receipt", True
@@ -489,7 +489,7 @@ def render_layby_statement(company, layby, *, payment=None) -> str:
         template = "thermal"
 
     logo_url = branding.get("logo_data_url") or ""
-    logotype = branding.get("logo_text") or company.name
+    logotype = company.wordmark
     address_lines = [business.get("address"), business.get("city"), business.get("country")]
     address = ", ".join([line for line in address_lines if line])
     meta = " · ".join([part for part in [business.get("phone"), business.get("email")] if part])

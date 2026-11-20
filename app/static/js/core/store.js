@@ -45,6 +45,17 @@ export function companyName() {
   return getSession()?.company?.name || "Platform";
 }
 
+/**
+ * The label the shell, receipts and window title use: a wordmark typed in
+ * Branding wins, otherwise the workspace name (so renames carry through).
+ */
+export function wordmark(company = currentCompany()) {
+  const branding = company?.settings?.branding || {};
+  const custom = String(branding.logo_text || "").replace(/\s+/g, " ").trim();
+  if (branding.logo_text_custom && custom) return custom;
+  return String(company?.name || "").trim();
+}
+
 export function hasPerm(permission) {
   const user = currentUser();
   if (!user) return false;
@@ -118,8 +129,8 @@ export function applyBranding() {
   } catch { /* private mode: the next boot keeps the default theme */ }
   syncThemeColor();
 
-  const logoText = branding.logo_text || session?.company?.name || "";
-  root.title = logoText ? `${logoText} · Universal POS` : "Universal POS";
+  const logoText = wordmark(session?.company);
+  document.title = logoText ? `${logoText} · Universal POS` : "Universal POS";
 }
 
 /* The installed app paints its status/title bar from this meta tag. */

@@ -145,6 +145,9 @@ def register():
             "vat_number": {"type": "str", "default": "", "max_len": 60},
             "company_reg_number": {"type": "str", "default": "", "max_len": 60},
             "whatsapp_number": {"type": "str", "default": "", "max_len": 40},
+            # Off by default: a sign-in email is personal unless the owner says the
+            # company uses it too (receipts, reports, contact address).
+            "email_is_company_email": {"type": "bool", "default": False},
         },
     )
     email = payload["email"].lower()
@@ -167,12 +170,12 @@ def register():
         plan="starter",
         currency_code=payload["currency_code"],
         currency_symbol=payload["currency_symbol"] or "$",
-        contact_email=email,
+        contact_email=email if payload["email_is_company_email"] else "",
         timezone="Africa/Harare",
         settings_patch={
             "business": {
                 "legal_name": payload["company_name"].strip(),
-                "email": email,
+                "email": email if payload["email_is_company_email"] else "",
                 "country": "Zimbabwe",
                 "tax_number": payload["vat_number"],
                 "company_reg_number": payload["company_reg_number"],

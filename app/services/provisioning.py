@@ -6,9 +6,14 @@ from datetime import timedelta
 
 from app.defaults import DEFAULT_ROLES
 from app.extensions import db
-from app.models import Company, CompanyModule, Location, PaymentMethod, Register, Role, User
+from app.models import Company, CompanyModule, Location, PaymentMethod, Register, Role, TaxRate, User
 from app.modules import MODULE_CATALOG
 from app.utils import slugify, unique_slug, utcnow
+
+# Zimbabwe's standard VAT rate: every new workspace starts with this rate set up,
+# marked default so products inherit it without extra work.
+DEFAULT_VAT_NAME = "VAT 15.5%"
+DEFAULT_VAT_RATE = 15.5
 
 
 def provision_company(
@@ -40,7 +45,7 @@ def provision_company(
                 "decimals": 2,
             },
             "business": {"legal_name": name.strip(), "email": contact_email},
-            "branding": {"logo_text": name.strip()},
+            "branding": {"logo_text": ""},
         },
     )
     db.session.add(company)
@@ -63,6 +68,14 @@ def provision_company(
 
     location = Location(company_id=company.id, name="Main Store", code="MAIN", is_default=True)
     db.session.add(location)
+    vat = TaxRate(
+        company_id=company.id,
+        name=DEFAULT_VAT_NAME,
+        rate=DEFAULT_VAT_RATE,
+        is_default=True,
+        is_inclusive=False,
+    )
+    db.session.add(vat)
     db.session.flush()
     db.session.add(Register(company_id=company.id, location_id=location.id, name="Counter 1", code="C1"))
     for method in (

@@ -5,7 +5,7 @@ import { icon } from "../core/icons.js";
 import { money, number, qty, isoDay, addDays, time, date, dateTime, initials } from "../core/fmt.js";
 import { get, downloadFile } from "../core/http.js";
 import {
-  currentCompany, currentUser, hasPerm, moduleOn, isDeveloper, impersonating,
+  currentCompany, currentUser, hasPerm, moduleOn, isDeveloper, impersonating, wordmark,
 } from "../core/store.js";
 import { toggleThemePreference } from "../core/prefs.js";
 import {
@@ -85,7 +85,7 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
     clear(bar);
     const company = currentCompany();
     const branding = company?.settings?.branding || {};
-    const name = branding.logo_text || company?.name || "Universal POS";
+    const name = wordmark(company) || "Universal POS";
     const clock = h("div", { class: "mapp__clock" });
     const tick = () => { clock.textContent = `${date(new Date(), { year: false })} · ${time(new Date())}`; };
     tick();

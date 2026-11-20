@@ -5,7 +5,7 @@ import { icon } from "./core/icons.js";
 import { money, dateTime, initials, timeZone, isoDay } from "./core/fmt.js";
 import {
   store, applyBranding, getSession, isAuthed, isDeveloper, impersonating, moduleOn,
-  hasPerm, hasAny, companyName, currentUser, currentCompany, preferences,
+  hasPerm, hasAny, companyName, currentUser, currentCompany, preferences, wordmark,
 } from "./core/store.js";
 import { toggleThemePreference, savePreferences } from "./core/prefs.js";
 import { api, get, post } from "./core/http.js";
@@ -598,7 +598,7 @@ function renderSidebar(sidebar) {
   clear(sidebar);
   const company = currentCompany();
   const branding = company?.settings?.branding || {};
-  const logoText = branding.logo_text || company?.name || "Universal POS";
+  const logoText = wordmark(company) || "Universal POS";
 
   const brand = h("div", { class: "brand" },
     h("div", { class: "brand__mark" },

@@ -50,7 +50,7 @@ SETTINGS_SPEC: dict[str, dict[str, str]] = {
         "whatsapp_number": "str", "website": "str", "address": "str", "city": "str", "country": "str",
     },
     "branding": {
-        "logo_text": "str", "logo_data_url": "long", "primary": "color", "accent": "color",
+        "logo_text": "str", "logo_text_custom": "bool", "logo_data_url": "long", "primary": "color", "accent": "color",
         "theme": "enum:light,dark", "radius": "int:0,32", "density": "enum:comfortable,compact",
     },
     "sales": {
@@ -174,6 +174,7 @@ def update_settings():
 @permission_required("settings.manage")
 def update_profile():
     company = current_company()
+    previous_name = company.name
     payload = validate(
         request.get_json(silent=True) or {},
         {
@@ -185,6 +186,11 @@ def update_profile():
     company.name = payload["name"]
     company.contact_email = payload["contact_email"]
     company.timezone = payload["timezone"]
+    # Until the owner types their own wordmark in Branding, the sidebar label is
+    # just the workspace name - so a rename must carry through here too.
+    branding = (company.settings or {}).get("branding") or {}
+    if not branding.get("logo_text_custom"):
+        company.update_settings({"branding": {"logo_text": payload["name"]}})
     db.session.commit()
     audit("company.profile_updated", entity="company", entity_id=company.id,
           summary="Workspace profile updated", commit=True)
@@ -1180,7 +1186,7 @@ def onboarding():
 
     steps = [
         {"key": "branding", "label": "Make it yours", "hint": "Set your colours and logo",
-         "done": bool(branding.get("primary") and branding.get("logo_text")), "route": "#/settings/branding"},
+         "done": bool(branding.get("primary") and company.wordmark), "route": "#/settings/branding"},
         {"key": "taxes", "label": "Add a tax rate", "hint": "So receipts show the right tax",
          "done": taxes > 0, "route": "#/settings/taxes"},
         {"key": "payments", "label": "Choose payment methods", "hint": "Cash, card, mobile money",
