@@ -4225,7 +4225,7 @@ body,
 }
 @media (min-width: 821px) {
   :root {
-    --type-scale: .9;
+    --type-scale: .88;
     --space-scale: .9;
   }
 }
@@ -4388,3 +4388,19 @@ body,
 .field-with-action { display: flex; align-items: center; gap: calc(var(--space-scale, 1) * 8px); }
 .field-with-action .input { flex: 1; min-width: 0; }
 .field-with-action .btn { flex: none; white-space: nowrap; }
+
+/* ---------- large-type refinement -----------------------------------------
+   The biggest numbers and titles stay the loudest thing on screen without
+   shouting: display sizes are capped here so later passes cannot re-inflate
+   them one rule at a time. */
+.page-head__title,
+.page-head h1 { font-size: calc(var(--type-scale, 1) * 20px); }
+.kpi__value { font-size: calc(var(--type-scale, 1) * 21px); }
+.kpi--compact .kpi__value { font-size: calc(var(--type-scale, 1) * 18px); }
+.auth__title { font-size: calc(var(--type-scale, 1) * 19px); }
+.auth__headline { font-size: calc(var(--type-scale, 1) * clamp(23px, 2.5vw, 32px)); }
+.mhero__value { font-size: calc(var(--type-scale, 1) * 24px); }
+.dev-hero__title { font-size: calc(var(--type-scale, 1) * 17px); }
+.pos-readonly__title { font-size: calc(var(--type-scale, 1) * 17px); }
+.cart__row--total .num { font-size: calc(var(--type-scale, 1) * 19px); }
+[data-density="compact"] .kpi__value { font-size: calc(var(--type-scale, 1) * 19px); }
