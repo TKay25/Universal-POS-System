@@ -385,11 +385,11 @@ sign-in art panel — a masked blueprint grid with a slow drifting glow. Everyth
 painted on opaque surfaces, so contrast and dark mode are unaffected; the tiled layer drops
 out under `prefers-reduced-data`, and the drift stops under `prefers-reduced-motion`.
 
-Type is driven by one knob: every `font-size` in `app.css` is
-`calc(var(--type-scale, 1) * …)`, and `--type-scale` is **.94** from 821 px up (desktop and
-tablet) and **1** on the phone shell — so density can be tuned in a single place. Sizes
-supplied inline from JS go through the same scale via the `.fs` utility
-(`style: { "--fs": "16px" }`).
+Type and spacing are driven by two knobs: every `font-size` in `app.css` is
+`calc(var(--type-scale, 1) * …)` and every `padding`/`margin`/`gap` is
+`calc(var(--space-scale, 1) * …)`. Both are **.9** from 821 px up (desktop and tablet) and
+**1** on the phone shell — so density can be tuned in one place. Sizes supplied inline from
+JS go through the same scale via the `.fs` utility (`style: { "--fs": "16px" }`).
 
 ### Phone app
 

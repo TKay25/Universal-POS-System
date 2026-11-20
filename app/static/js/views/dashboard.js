@@ -135,12 +135,6 @@ export default async function dashboardView(ctx) {
         foot: `${number(cards.transactions)} transactions`, tone: "",
       }));
     }
-    if (widgets.has("transactions_today")) {
-      kpis.push(statCard({
-        label: "Transactions", value: number(cards.transactions), icon: "receipt",
-        foot: `${number(cards.items_sold, 1)} items sold`, tone: "accent",
-      }));
-    }
     if (widgets.has("average_ticket") || widgets.has("gross_profit")) {
       const sales = Number(cards.sales_cents || 0);
       const gross = Number(cards.gross_profit_cents || 0);
@@ -150,6 +144,12 @@ export default async function dashboardView(ctx) {
         icon: "trend",
         foot: `${sales ? ((gross / sales) * 100).toFixed(1) : "0.0"}% margin · ${money(cards.average_ticket_cents)} avg sale`,
         tone: "success",
+      }));
+    }
+    if (widgets.has("transactions_today")) {
+      kpis.push(statCard({
+        label: "Transactions", value: number(cards.transactions), icon: "receipt",
+        foot: `${number(cards.items_sold, 1)} items sold`, tone: "accent",
       }));
     }
     if (widgets.has("low_stock")) {
