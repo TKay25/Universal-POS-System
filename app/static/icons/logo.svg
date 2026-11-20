@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Universal POS">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c6cfa"/>
+      <stop offset=".55" stop-color="#5b5bd6"/>
+      <stop offset="1" stop-color="#4034be"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx=".24" cy=".1" r=".85">
+      <stop offset="0" stop-color="#fff" stop-opacity=".3"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bloom" cx=".88" cy=".92" r=".62">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity=".22"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="clip"><rect width="512" height="512" rx="116" ry="116"/></clipPath>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect width="512" height="512" fill="url(#tile)"/>
+    <rect width="512" height="512" fill="url(#sheen)"/>
+    <rect width="512" height="512" fill="url(#bloom)"/>
+  </g>
+  <path d="M108 126 L120 104 L132 126 L144 104 L156 126 L168 104 L180 126 L180 260 A76 76 0 0 0 332 260 L332 126 L344 104 L356 126 L368 104 L380 126 L392 104 L404 126 L404 260 A148 148 0 0 1 108 260 Z" fill="#fff"/>
+</svg>

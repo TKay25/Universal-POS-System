@@ -304,6 +304,90 @@ def test_invited_users_get_a_temporary_password_and_must_change_it(client, owner
     assert reset.get_json()["item"]["must_change_password"] is True
 
 
+def test_idempotency_key_stops_double_posting(client, owner):
+    """A retried offline write must return the first result, never apply twice."""
+    headers = owner["headers"]
+    product = make_product(client, headers, stock_qty=10)
+    method = bootstrap(client)["payment_methods"][0]
+    body = {
+        "lines": [{"product_id": product["id"], "qty": 2}],
+        "payments": [{"method_id": method["id"], "amount_cents": 24000, "tendered_cents": 24000}],
+    }
+    keyed = {**headers, "Idempotency-Key": "offline-sale-1"}
+
+    first = client.post("/api/sales", json=body, headers=keyed)
+    assert first.status_code == 201, first.get_json()
+    second = client.post("/api/sales", json=body, headers=keyed)
+    assert second.status_code == 201, second.get_json()
+    assert first.get_json()["item"]["id"] == second.get_json()["item"]["id"]
+
+    fresh = client.get(f"/api/products?q={product['sku']}", headers=headers).get_json()["items"][0]
+    assert fresh["stock_qty"] == 8  # two sold, not four
+
+    # A different key is a different sale.
+    other = client.post("/api/sales", json=body, headers={**headers, "Idempotency-Key": "offline-sale-2"})
+    assert other.status_code == 201, other.get_json()
+    assert other.get_json()["item"]["id"] != first.get_json()["item"]["id"]
+
+
+def test_barcode_studio_mints_codes_and_prints_labels(client, owner):
+    from app.services.barcode import ean13_check_digit, is_ean13
+
+    assert ean13_check_digit("400638133393") == "1"
+    assert is_ean13("4006381333931")
+    assert not is_ean13("4006381333932")
+
+    headers = owner["headers"]
+    blank = make_product(client, headers, name="Unlabelled mug", sku="MUG-1", barcode="")
+    coded = make_product(client, headers, name="Coded drill", sku="DRL-2", barcode="4006381333931")
+
+    summary = client.get("/api/barcodes/summary", headers=headers).get_json()
+    assert summary["enabled"] is True
+    assert summary["counts"]["missing"] >= 1
+
+    made = client.post("/api/barcodes/generate", json={}, headers=headers)
+    assert made.status_code == 200, made.get_json()
+    generated = made.get_json()["items"]
+    assert generated
+    assert all(is_ean13(item["barcode"]) for item in generated)
+
+    # A second run keeps existing codes instead of re-minting them.
+    again = client.post("/api/barcodes/generate", json={}, headers=headers).get_json()
+    assert again["generated"] == 0
+    assert again["kept"] >= 1
+
+    listed = client.get("/api/products?q=MUG-1", headers=headers).get_json()["items"]
+    assert is_ean13(listed[0]["barcode"])
+
+    labels = client.get(
+        f"/api/barcodes/labels?ids={blank['id']},{coded['id']}&copies=2&layout=sheet",
+        headers=headers,
+    )
+    assert labels.status_code == 200, labels.get_data(as_text=True)[:400]
+    assert labels.mimetype == "text/html"
+    page = labels.get_data(as_text=True)
+    assert "Unlabelled mug" in page and "Coded drill" in page
+    assert page.count('class="label"') == 4  # two products, two copies each
+    assert "barcode--ean" in page
+
+    roll = client.get(f"/api/barcodes/labels?ids={coded['id']}&layout=roll", headers=headers)
+    assert roll.status_code == 200
+    assert "class=\"roll\"" in roll.get_data(as_text=True)
+
+    preview = client.post(
+        "/api/barcodes/preview", json={"product_ids": [coded["id"]]}, headers=headers
+    ).get_json()
+    assert preview["items"][0]["svg"].startswith("<svg")
+    assert "barcode--ean" in preview["items"][0]["svg"]
+
+    # Turning the module off closes the studio, as the module gate promises.
+    off = client.patch("/api/company/modules/barcode", json={"enabled": False}, headers=headers)
+    assert off.status_code == 200, off.get_json()
+    blocked = client.post("/api/barcodes/generate", json={}, headers=headers)
+    assert blocked.status_code == 409, blocked.get_json()
+    assert blocked.get_json()["error"]["code"] == "module_disabled"
+
+
 def test_duplicate_sku_and_barcode_are_blocked(client, owner):
     headers = owner["headers"]
     make_product(client, headers)

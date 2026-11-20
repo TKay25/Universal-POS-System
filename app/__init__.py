@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -14,6 +13,66 @@ from werkzeug.exceptions import HTTPException
 from app.config import Config
 from app.extensions import db
 from app.utils import ValidationError
+
+IDEMPOTENT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+IDEMPOTENCY_TTL_DAYS = 7
+
+
+def _idempotent_replay():
+    """Return the stored response when this exact write already landed."""
+    key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not key or request.method not in IDEMPOTENT_METHODS:
+        return None
+    from flask import Response
+
+    from app.models import IdempotencyKey
+    from app.security import current_company
+
+    company = current_company()
+    if company is None:
+        return None
+    row = IdempotencyKey.query.filter_by(company_id=company.id, key=key).first()
+    if row is None:
+        return None
+    return Response(row.body, status=row.status, mimetype="application/json")
+
+
+def _store_idempotent(response) -> None:
+    """Remember a successful write so the same key replays instead of repeating."""
+    key = (request.headers.get("Idempotency-Key") or "").strip()
+    if not key or request.method not in IDEMPOTENT_METHODS:
+        return
+    if not (200 <= response.status_code < 300) or not response.is_json:
+        return
+    from datetime import timedelta
+
+    from app.models import IdempotencyKey
+    from app.security import current_company
+    from app.utils import utcnow
+
+    company = current_company()
+    if company is None:
+        return
+    try:
+        if IdempotencyKey.query.filter_by(company_id=company.id, key=key).first() is not None:
+            return
+        db.session.add(
+            IdempotencyKey(
+                company_id=company.id,
+                key=key[:80],
+                method=request.method,
+                path=request.path[:200],
+                status=response.status_code,
+                body=response.get_data(as_text=True),
+            )
+        )
+        # Keys only matter while a device might still be retrying.
+        db.session.query(IdempotencyKey).filter(
+            IdempotencyKey.created_at < utcnow() - timedelta(days=IDEMPOTENCY_TTL_DAYS)
+        ).delete(synchronize_session=False)
+        db.session.commit()
+    except Exception:  # noqa: BLE001 - never fail a write because the guard hiccupped
+        db.session.rollback()
 
 
 def create_app(config_object: type = Config, **overrides) -> Flask:
@@ -40,6 +99,7 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
 
     from app.blueprints.auth import bp as auth_bp
     from app.blueprints.activity import bp as activity_bp
+    from app.blueprints.barcodes import bp as barcodes_bp
     from app.blueprints.catalog import bp as catalog_bp
     from app.blueprints.company import bp as company_bp
     from app.blueprints.developer import bp as developer_bp
@@ -50,8 +110,8 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     from app.blueprints.workspaces import bp as workspaces_bp
 
     for blueprint in (
-        auth_bp, activity_bp, company_bp, catalog_bp, sales_bp, laybys_bp, reports_bp, developer_bp,
-        report_delivery_bp, workspaces_bp
+        auth_bp, activity_bp, company_bp, catalog_bp, barcodes_bp, sales_bp, laybys_bp, reports_bp,
+        developer_bp, report_delivery_bp, workspaces_bp
     ):
         app.register_blueprint(blueprint)
 
@@ -62,7 +122,8 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
 
     # ---- cross cutting ---------------------------------------------------- #
     from app.security import (
-        ApiError, PASSWORD_CHANGE_ALLOWED_PATHS, csrf_protect, password_change_required,
+        ApiError, PASSWORD_CHANGE_ALLOWED_PATHS, csrf_protect, current_company,
+        password_change_required,
     )
 
     @app.before_request
@@ -110,6 +171,15 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
                     ),
                     403,
                 )
+            # Replays from the offline outbox must never apply twice.
+            replay = _idempotent_replay()
+            if replay is not None:
+                return replay
+
+    @app.after_request
+    def _remember_idempotent(response):
+        _store_idempotent(response)
+        return response
 
     @app.errorhandler(ApiError)
     def _api_error(error: ApiError):
@@ -241,9 +311,9 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
         if not results:
             print("No company is due for a report right now.")
 
-    def _bootstrap():
+    def _bootstrap() -> None:
         """Create the schema (and demo data) tolerating a slow/transient database."""
-        last_error = None
+        last_error: OperationalError | None = None
         for attempt in range(4):
             try:
                 db.create_all()
@@ -275,7 +345,8 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
                 app.logger.warning("Database not ready (attempt %s/4): %s", attempt + 1, error)
                 db.session.rollback()
                 time.sleep(2 * (attempt + 1))
-        raise last_error
+        if last_error is not None:
+            raise last_error
 
     with app.app_context():
         _bootstrap()

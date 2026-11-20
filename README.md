@@ -252,6 +252,16 @@ lists them — use this table instead.
   both. Company setup also captures the **VAT registration number** and **company
   registration number**; both print on receipts when present.
 - Receipts carry a Code 128 barcode (pure Python, no native deps).
+- **Barcode studio** (Catalog → Barcode studio, needs the Barcode module) mints in-store
+  **EAN-13** codes in the GS1 *20–29* range — the block reserved for shop-internal numbering,
+  so they can never clash with a manufacturer's barcode — and prints labels two ways:
+  **A4 sheet** (grid with cut guides) or **label roll** (one label per page at the exact
+  millimetre size, so a Zebra/Dymo-style printer needs no extra software). Label size, copies
+  and whether the price prints follow Settings → Modules → Barcode, and can be tweaked per
+  print. The same *Make code* button sits on the barcode field of the product form, so a new
+  or edited product can get its code without leaving the form. Anything 13 digits with a
+  valid check digit prints as EAN-13; other codes (legacy SKUs, receipt numbers) fall back to
+  Code 128.
 
 ## Stock, lay-by and bulk tools
 
@@ -443,19 +453,31 @@ icon, a full-screen window and a cached shell that opens without a connection.
   tickets and customer records only ever come from the server. Losing the connection shows
   the offline panel with **Try again** (and an automatic retry on `online`) instead of a
   browser error page.
-- **One-click install** — the account menu (desktop and phone shells) and the sign-in card
-  offer **Install app**, and only when the browser has actually handed over its
-  `beforeinstallprompt` event: one click runs the native flow, no steps to follow. Installed
-  windows open on the **sign-in screen** every launch (the browser session may still be
-  live, but an installed app starts at login like any other terminal app); a refresh inside
-  the same window keeps the session. iOS is the one platform that has no programmatic
-  install, so there the single line *Tap Share → Add to Home Screen* is shown instead of a
-  step list.
+- **One-click install** — the account menu (desktop and phone shells) and the sign-in art
+  always show **Install Universal POS** under the brand lockup: the button never disappears
+  or goes stale while the browser is still preparing its prompt, and it flips to
+  *Installed* once the app is running standalone. One click runs the native flow, no steps
+  to follow. Installed windows open on the **sign-in screen** every launch (the browser
+  session may still be live, but an installed app starts at login like any other terminal
+  app); a refresh inside the same window keeps the session. iOS is the one platform that has
+  no programmatic install, so there the single line *Tap Share → Add to Home Screen* is
+  shown instead of a step list.
+- **Offline sales, then push to cloud** — when a write cannot reach the server the till
+  offers to keep it **on this device** (`core/offline.js`, one outbox per workspace in
+  `localStorage`). A floating pill shows `N changes waiting`; the moment the connection
+  returns a **Back online** prompt offers to push them in order, and the pill's *Push now*
+  does the same later. Each queued request carries an `Idempotency-Key`, and the server
+  stores the answer under `idempotency_keys` (7-day TTL), so a retry that already landed
+  returns the original receipt instead of charging twice. Sales decrement the on-screen
+  stock immediately, and stock adjustments use the same outbox.
 - **Branding follows the theme** — `<meta name="theme-color">` is rewritten on every theme
   or branding change so the installed window's title bar matches the app surface.
 - Icons live in `app/static/icons/` (`icon-192`, `icon-512`, `icon-maskable-*`,
   `apple-touch-icon.png`, `favicon-32.png`); `apple-touch-icon` and the Apple meta tags
-  cover iOS home-screen installs.
+  cover iOS home-screen installs. The mark is a thick white **U** whose arms end in a
+  receipt tear on the violet tile — `logo.svg` is the vector source, and the same path is
+  inlined as the `logo` icon in `icons.js` (sign-in mark, developer sidebar), the boot
+  screen and `/offline`, so the product mark is identical everywhere.
 - Requires HTTPS in production (Render terminates TLS) or `localhost`/`127.0.0.1` locally,
   which browsers treat as secure contexts.
 

@@ -15,6 +15,8 @@ import {
   ALL_BRANCHES, branchLocations, branchQuery, branchScope, isAllBranches, setBranchScope,
 } from "./core/branch.js";
 import { initPwa, installApp, isStandalone, canInstall } from "./core/pwa.js";
+import { mountOfflineUi, refreshOfflineBar, promptPush } from "./core/offlineUi.js";
+import { outboxCount } from "./core/offline.js";
 import {
   button, iconButton, avatar, modal, drawer, toast, menu, field, textInput, switchRow,
   alertBox, sectionCard, badge,
@@ -25,6 +27,7 @@ import dashboardView from "./views/dashboard.js";
 import posView from "./views/pos.js";
 import salesView from "./views/sales.js";
 import inventoryView from "./views/inventory.js";
+import barcodesView from "./views/barcodes.js";
 import customersView from "./views/customers.js";
 import departmentsView from "./views/departments.js";
 import laybysView from "./views/laybys.js";
@@ -42,6 +45,7 @@ const views = {
   pos: posView,
   sales: salesView,
   inventory: inventoryView,
+  barcodes: barcodesView,
   customers: customersView,
   departments: departmentsView,
   laybys: laybysView,
@@ -106,6 +110,15 @@ const routes = [
     module: "inventory",
     perm: "inventory.manage",
     allowedAlso: ["products.manage"],
+  },
+  {
+    match: /^\/barcodes\/?$/,
+    tab: "barcodes",
+    view: "barcodes",
+    title: () => "Barcode studio",
+    icon: "barcode",
+    module: "barcode",
+    perm: "products.manage",
   },
   {
     match: /^\/customers\/?$/,
@@ -326,6 +339,7 @@ function startHeaderClock() {
 /* ------------------------------------------------------------------------- */
 async function boot() {
   const root = document.getElementById("root");
+  mountOfflineUi();
   try {
     const session = await get("/auth/session", undefined, { retry: false });
     store.set({ session: session.authenticated ? session : null, csrf: session.csrf_token, ready: true });
@@ -446,6 +460,9 @@ function navModel() {
   if (moduleOn("inventory") && hasAny("inventory.manage", "products.manage")) {
     catalog.push({ label: "Inventory", path: "/inventory", icon: "layers" });
   }
+  if (moduleOn("barcode") && hasPerm("products.manage")) {
+    catalog.push({ label: "Barcode studio", path: "/barcodes", icon: "barcode" });
+  }
   if (moduleOn("customers") && hasPerm("customers.manage")) {
     catalog.push({ label: "Customers", path: "/customers", icon: "users" });
   }
@@ -475,6 +492,7 @@ function navModel() {
 function renderShell() {
   applyBranding();
   viewportNarrow = narrowViewport();
+  refreshOfflineBar();
   // A teammate added with a temporary password gets the gate instead of a shell,
   // on phones and desktops alike, until they have chosen their own.
   if (currentUser()?.must_change_password) {
@@ -583,7 +601,7 @@ function renderSidebar(sidebar) {
     h("div", { class: "brand__mark" },
       branding.logo_data_url
         ? h("img", { src: branding.logo_data_url, alt: logoText })
-        : initials(logoText)),
+        : company ? initials(logoText) : icon("logo")),
     h("div", { class: "brand__text" },
       h("div", { class: "brand__name truncate" }, logoText || "Universal POS"),
       h("div", { class: "brand__sub" }, isDeveloper() && !impersonating() ? "Platform console" : company?.plan ? `${company.plan} plan` : "Workspace")));
@@ -935,6 +953,12 @@ function openPalette() {
     { label: "Departments", hint: "Catalog", icon: "layers", run: () => router?.go("/departments") },
     { label: "Lay-bys", hint: "Selling", icon: "wallet", run: () => router?.go("/laybys") },
     { label: "Open reports", hint: "Action", icon: "chart", run: () => router?.go("/reports") },
+    ...(moduleOn("barcode") && hasPerm("products.manage")
+      ? [{ label: "Barcode studio", hint: "Catalog", icon: "barcode", run: () => router?.go("/barcodes") }]
+      : []),
+    ...(outboxCount()
+      ? [{ label: "Push offline changes", hint: "Sync", icon: "upload", run: () => promptPush() }]
+      : []),
     { label: "Change password", hint: "Account", icon: "key", run: () => openPasswordDialog() },
     { label: "Sign out", hint: "Account", icon: "logout", run: signOut },
   );

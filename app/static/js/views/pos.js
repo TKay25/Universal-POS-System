@@ -14,6 +14,7 @@ import {
   toast, badge, statusBadge, emptyState, alertBox, confirmDialog, tagInput, menu, moneyInput, searchLoader,
 } from "../core/ui.js";
 import { printReceipt } from "./saleDetail.js";
+import { offerOfflineSave } from "../core/offlineUi.js";
 
 const SOUND_ON = () => posPreference("sound_enabled", moduleConfig("pos").sound_enabled !== false);
 const AUTO_PRINT = () => posPreference("auto_print", Boolean(moduleConfig("pos").auto_print));
@@ -277,6 +278,72 @@ export default async function posView(ctx) {
     renderGrid();
   }
 
+  /* A barcode scanner types the code and presses Enter, often while focus sits
+     somewhere else entirely. Look the code up (falling back to the server when
+     the product arrived after the till was opened) and drop it in the cart. */
+  async function scanCode(raw) {
+    const code = String(raw || "").trim();
+    if (!code) return false;
+    const lower = code.toLowerCase();
+    let match = state.products.find(
+      (product) => (product.barcode || "").toLowerCase() === lower
+        || (product.sku || "").toLowerCase() === lower,
+    );
+    if (!match) {
+      try {
+        const data = await get("/products/lookup", { code });
+        match = data.item;
+        if (match && !state.products.some((row) => row.id === match.id)) state.products.push(match);
+      } catch {
+        match = null;
+      }
+    }
+    if (!match) {
+      toast(`No product matches “${code}”.`, "warning", "Code not found");
+      return false;
+    }
+    addProduct(match);
+    flashCart();
+    return true;
+  }
+
+  function flashCart() {
+    right.classList.remove("is-scanned");
+    void right.offsetWidth;
+    right.classList.add("is-scanned");
+    setTimeout(() => right.classList.remove("is-scanned"), 620);
+  }
+
+  let scanBuffer = "";
+  let scanAt = 0;
+  function onScanKey(event) {
+    if (!el.isConnected || el.offsetParent === null) return;
+    if (!moduleOn("barcode") || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (document.querySelector(".modal, dialog[open]")) return;
+    const target = event.target;
+    const tag = target?.tagName;
+    const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable;
+    if (typing && target?.dataset?.posSearch !== "1") return;
+    if (event.key === "Enter") {
+      const code = scanBuffer.trim();
+      scanBuffer = "";
+      if (code.length >= 4) {
+        event.preventDefault();
+        scanCode(code);
+      }
+      return;
+    }
+    if (event.key.length !== 1) {
+      scanBuffer = "";
+      return;
+    }
+    const now = performance.now();
+    if (now - scanAt > 120) scanBuffer = "";
+    scanAt = now;
+    scanBuffer = (scanBuffer + event.key).slice(-64);
+  }
+  document.addEventListener("keydown", onScanKey);
+
   function changeQty(line, delta) {
     const next = Math.round((line.qty + delta) * 1000) / 1000;
     if (next <= 0) {
@@ -349,15 +416,12 @@ export default async function posView(ctx) {
         state.search = e.target.value;
         renderGrid();
       }, 120),
-      onKeyDown: (e) => {
+      onKeyDown: async (e) => {
         if (e.key !== "Enter") return;
-        const term = e.target.value.trim().toLowerCase();
+        const term = e.target.value.trim();
         if (!term) return;
-        const match = state.products.find(
-          (product) => (product.barcode || "").toLowerCase() === term || (product.sku || "").toLowerCase() === term,
-        );
-        if (match) {
-          addProduct(match);
+        // Enter means "this is a complete code" — scan it instead of filtering.
+        if (await scanCode(term)) {
           e.target.value = "";
           state.search = "";
           renderGrid();
@@ -1286,39 +1350,58 @@ export default async function posView(ctx) {
       }
       submit.setLoading(true);
       clear(errorHost);
+      const salePayload = {
+        lines: state.cart.map((line) => ({
+          product_id: line.product.id,
+          qty: line.qty,
+          unit_price_cents: line.unitPrice,
+          override_pin: line.overridePin || "",
+          discount_cents: line.discount || 0,
+          note: line.note || "",
+        })),
+        payments: payments.map((entry) => ({
+          method_id: entry.method_id,
+          amount_cents: entry.amount_cents,
+          tendered_cents: entry.tendered_cents,
+          reference: entry.reference,
+        })),
+        customer_id: state.customer?.id || null,
+        discount: state.discount
+          ? (state.discount.code ? { code: state.discount.code } : { type: state.discount.type, value: state.discount.type === "percent" ? state.discount.value : state.discount.value })
+          : null,
+        tip_cents: state.tip,
+        redeem_points: state.redeem,
+        note: state.note,
+        shift_id: state.shift?.id || null,
+        location_id: state.locationId,
+        register_id: state.registers.find((row) => row.location_id === state.locationId)?.id || null,
+      };
       try {
-        const { item } = await post("/sales", {
-          lines: state.cart.map((line) => ({
-            product_id: line.product.id,
-            qty: line.qty,
-            unit_price_cents: line.unitPrice,
-            override_pin: line.overridePin || "",
-            discount_cents: line.discount || 0,
-            note: line.note || "",
-          })),
-          payments: payments.map((entry) => ({
-            method_id: entry.method_id,
-            amount_cents: entry.amount_cents,
-            tendered_cents: entry.tendered_cents,
-            reference: entry.reference,
-          })),
-          customer_id: state.customer?.id || null,
-          discount: state.discount
-            ? (state.discount.code ? { code: state.discount.code } : { type: state.discount.type, value: state.discount.type === "percent" ? state.discount.value : state.discount.value })
-            : null,
-          tip_cents: state.tip,
-          redeem_points: state.redeem,
-          note: state.note,
-          shift_id: state.shift?.id || null,
-          location_id: state.locationId,
-          register_id: state.registers.find((row) => row.location_id === state.locationId)?.id || null,
-        });
+        const { item } = await post("/sales", salePayload);
         paymentModal.close();
         clearCart();
         state.lastSale = item;
         showSuccess(item);
         await load();
       } catch (error) {
+        // No connection: keep the sale here and push it once the till is back online.
+        if (error.code === "network" && await offerOfflineSave({
+          path: "/sales",
+          body: salePayload,
+          label: `Sale · ${money(totals.total)} · ${number(totals.itemCount, 0)} item${totals.itemCount === 1 ? "" : "s"}`,
+        })) {
+          for (const line of state.cart) {
+            const product = state.products.find((row) => row.id === line.product.id);
+            if (product && product.track_stock) {
+              product.stock_qty = Math.max(0, Number(product.stock_qty || 0) - line.qty);
+            }
+          }
+          paymentModal.close();
+          clearCart();
+          renderGrid();
+          showOfflineSale(totals);
+          return;
+        }
         errorHost.appendChild(alertBox(error.message, "danger"));
       } finally {
         submit.setLoading(false);
@@ -1343,6 +1426,24 @@ export default async function posView(ctx) {
     amountInput.addEventListener("input", updatePreview);
     referenceField.classList.toggle("hidden", !selectedMethod?.requires_reference);
     refresh();
+  }
+
+  function showOfflineSale(totals) {
+    let instance;
+    instance = modal({
+      title: "Sale saved offline",
+      subtitle: `${money(totals.total)} · ${number(totals.itemCount, 0)} item${totals.itemCount === 1 ? "" : "s"}`,
+      size: "sm",
+      body: h("div", { class: "col gap-3 center" },
+        h("div", {
+          class: "module-card__icon",
+          style: { margin: "0 auto", width: "46px", height: "46px", background: "var(--warning-soft, rgba(245,158,11,.14))", color: "var(--warning, #f59e0b)" },
+        }, icon("clock")),
+        h("div", { class: "small" }, "This till cannot reach the cloud right now. The sale is safe on this device."),
+        h("div", { class: "small dim" },
+          "Push it to the cloud from the status pill at the bottom of the screen once you are back online.")),
+      footer: [button("Done", { variant: "primary", onClick: () => instance.close() })],
+    });
   }
 
   function showSuccess(sale) {

@@ -44,12 +44,13 @@ async function refreshSession() {
   return refreshing;
 }
 
-export async function api(path, { method = "GET", body, query, signal, raw = false, retry = true } = {}) {
+export async function api(path, { method = "GET", body, query, signal, raw = false, retry = true, headers: extraHeaders } = {}) {
   const headers = { Accept: raw ? "*/*" : "application/json" };
   const token = store.state.csrf;
   if (token) headers["X-CSRF-Token"] = token;
   if (branchScope().all) headers["X-Branch-Scope"] = "all";
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (extraHeaders) Object.assign(headers, extraHeaders);
 
   let response;
   try {

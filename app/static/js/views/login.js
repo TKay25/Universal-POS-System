@@ -5,7 +5,7 @@ import { icon } from "../core/icons.js";
 import { store, applyBranding } from "../core/store.js";
 import { post } from "../core/http.js";
 import { button, field, textInput, select, alertBox, segmented, passwordField } from "../core/ui.js";
-import { installApp, canInstall } from "../core/pwa.js";
+import { installApp, canInstall, isStandalone } from "../core/pwa.js";
 
 const CURRENCIES = [
   { value: "USD|$", label: "US Dollar ($)" },
@@ -183,14 +183,14 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
   return h("div", { class: "auth" },
     h("div", { class: "auth__art" },
       h("div", { class: "auth__brand" },
-        h("div", { class: "brand__mark" }, icon("sparkles")),
+        h("div", { class: "brand__mark" }, icon("logo")),
         h("div", {},
           h("div", { style: { fontWeight: "700", letterSpacing: "-.02em" } }, "Universal POS"),
           h("div", { class: "tiny", style: { color: "rgba(255,255,255,.6)" } }, "Build the till your business actually needs"))),
       h("h1", { class: "auth__headline" }, "One POS. Every business. Your rules."),
       h("p", { class: "auth__lead" },
         "Start with a complete point of sale, then switch on the modules you need — inventory, loyalty, tips, multi-location, custom workspaces and more. Every screen, colour and receipt is yours to shape."),
-      canInstall() ? installRow("hero") : null,
+      installRow("hero"),
       h("div", { class: "auth__points" },
         point("sparkles", "Compose your own POS", "Enable only the modules you sell with, and configure each one."),
         point("palette", "Brand every pixel", "Colours, logo, receipts and dashboards follow your brand."),
@@ -208,17 +208,39 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
         canInstall() ? installRow("card") : null)));
 }
 
+/* Always on screen: the label reflects what the browser can do right now, so the
+   install entry never disappears or goes stale while the prompt is pending. */
 function installRow(variant) {
+  const hint = h("div", { class: "auth__install-hint" });
+  const label = h("span", {}, "Install");
+  const action = h("button", {
+    class: "btn btn--primary btn--sm",
+    type: "button",
+    onClick: () => installApp(),
+  }, icon("download"), label);
+
+  const sync = () => {
+    if (isStandalone()) {
+      label.textContent = "Installed";
+      action.disabled = true;
+      hint.textContent = "Already on this device — launch it from your desktop or home screen.";
+      return;
+    }
+    action.disabled = false;
+    label.textContent = "Install";
+    hint.textContent = canInstall()
+      ? "Opens full screen with its own icon — offline shell included."
+      : "One click as soon as your browser hands over its install prompt.";
+  };
+  window.addEventListener("pos:install-available", sync);
+  window.addEventListener("pos:installed", sync);
+  sync();
+
   return h("div", { class: `auth__install auth__install--${variant}` },
     h("div", { class: "auth__install-copy" },
       h("div", { class: "auth__install-title" }, "Install Universal POS"),
-      h("div", { class: "auth__install-hint" }, "Opens full screen with its own icon — offline shell included.")),
-    button("Install", {
-      icon: "download",
-      size: "sm",
-      variant: "primary",
-      onClick: () => installApp(),
-    }));
+      hint),
+    action);
 }
 
 function point(iconName, title, text) {

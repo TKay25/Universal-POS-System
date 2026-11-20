@@ -723,7 +723,8 @@ def export_products():
 @permission_required("products.manage")
 def product_label(product_id: int):
     """Printable shelf/product label with a Code 128 barcode."""
-    from app.services.receipt import barcode_svg, money as money_fmt
+    from app.services.barcode import barcode_for
+    from app.services.receipt import money as money_fmt
 
     company = current_company()
     product = get_scoped(Product, product_id, company.id)
@@ -732,7 +733,7 @@ def product_label(product_id: int):
     height = int(config.get("label_height_mm", 25) or 25)
     show_price = bool(config.get("show_price_on_label", True))
     code = product.barcode or product.sku or f"P{product.id}"
-    svg = barcode_svg(code, height=30, module=1.2)
+    svg = barcode_for(code, height=30, module=1.15)
     settings = company.settings
     from flask import Response as FlaskResponse
 

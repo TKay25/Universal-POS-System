@@ -8,6 +8,8 @@ import { currency, moduleOn } from "../core/store.js";
 import { requireBranchAction } from "../core/branch.js";
 import { button, iconButton, field, textInput, textarea, select, switchControl, modal, confirmDialog,
   formGrid, moneyInput, fundingPicker, alertBox, emptyState, toast } from "../core/ui.js";
+import { offerOfflineSave } from "../core/offlineUi.js";
+import { newInStoreCode } from "../core/barcode.js";
 
 const COLORS = ["#5b5bd6", "#22d3ee", "#f59e0b", "#10b981", "#ef4444", "#8b5cf6", "#0ea5e9", "#f97316", "#64748b"];
 
@@ -262,7 +264,26 @@ export function openProductForm({
           hint: isEdit ? "" : "Existing products appear as you type - pick one to add stock instead." }),
         matchesHost),
       field({ label: "SKU", control: sku }),
-      field({ label: "Barcode", control: barcode, hint: moduleOn("barcode") ? "Used when scanning at the till." : "" }),
+      field({
+        label: "Barcode",
+        control: h("div", { class: "field-with-action" },
+          barcode,
+          moduleOn("barcode")
+            ? button("Make code", {
+              size: "sm",
+              variant: "ghost",
+              icon: "barcode",
+              title: "Create an in-store EAN-13 barcode",
+              onClick: () => {
+                barcode.value = newInStoreCode(knownProducts.map((row) => row.barcode).filter(Boolean));
+                barcode.focus();
+                barcode.select?.();
+                toast("Barcode created — print a label from the Barcode studio.", "info");
+              },
+            })
+            : null),
+        hint: moduleOn("barcode") ? "Scanned at the till. Leave it blank to mint one later." : "",
+      }),
       field({ label: "Department", control: department }),
       field({ label: "Category", control: category }),
       field({ label: "Selling price", control: price, required: true, hint: `What customers pay, in ${currency().code}` }),
@@ -569,22 +590,31 @@ export function openAdjustStock({ product, initialTab = "add", onSaved = () => {
         funding.picker.focus();
         return;
       }
+      const stockPayload = {
+        mode: state.tab === "set" ? "set" : "delta",
+        qty: state.tab === "remove" ? -amount : amount,
+        reason: reasonValue(),
+        note: note.value.trim(),
+        reference: reference.value.trim(),
+        buying_price: addingStock() ? buyingPrice.value : undefined,
+        funding_source: addingStock() ? funding.value() : undefined,
+        funding_note: addingStock() ? funding.noteValue() : undefined,
+      };
       trigger.setLoading(true);
       try {
-        await post(`/products/${product.id}/stock`, {
-          mode: state.tab === "set" ? "set" : "delta",
-          qty: state.tab === "remove" ? -amount : amount,
-          reason: reasonValue(),
-          note: note.value.trim(),
-          reference: reference.value.trim(),
-          buying_price: addingStock() ? buyingPrice.value : undefined,
-          funding_source: addingStock() ? funding.value() : undefined,
-          funding_note: addingStock() ? funding.noteValue() : undefined,
-        });
+        await post(`/products/${product.id}/stock`, stockPayload);
         toast(state.tab === "remove" ? "Stock removed." : "Stock updated.", "success");
         instance.close();
         onSaved();
       } catch (error) {
+        if (error.code === "network" && await offerOfflineSave({
+          path: `/products/${product.id}/stock`,
+          body: stockPayload,
+          label: `Stock ${state.tab} · ${product.name}`,
+        })) {
+          instance.close();
+          return;
+        }
         clear(errorHost);
         errorHost.appendChild(alertBox(error.message, "danger"));
       } finally {

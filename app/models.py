@@ -1377,6 +1377,28 @@ class AuditLog(Base):
         }
 
 
+class IdempotencyKey(Base):
+    """A replay guard for writes that may be pushed again after a dropped link.
+
+    The till queues sales and stock changes while offline, then replays them when
+    the connection returns. Each queued request carries a client-generated key, so
+    a retry that actually reached the server the first time returns the stored
+    response instead of charging the customer twice.
+    """
+
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (UniqueConstraint("company_id", "key", name="uq_idempotency_company_key"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    company_id = db.Column(db.Integer, db.ForeignKey("companies.id", ondelete="CASCADE"), nullable=False, index=True)
+    key = db.Column(db.String(80), nullable=False)
+    method = db.Column(db.String(8), default="POST", nullable=False)
+    path = db.Column(db.String(200), default="", nullable=False)
+    status = db.Column(db.Integer, default=200, nullable=False)
+    body = db.Column(db.Text, default="", nullable=False)
+    created_at = db.Column(db.DateTime, default=utcnow, nullable=False, index=True)
+
+
 class Announcement(TimestampMixin, Base):
     __tablename__ = "announcements"
 

@@ -4231,3 +4231,160 @@ body,
 }
 
 .fs { font-size: calc(var(--type-scale, 1) * var(--fs, 1rem)); }
+
+
+/* ---------- barcode studio ------------------------------------------------ */
+.bstudio__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(300px, .6fr);
+  gap: calc(var(--space-scale, 1) * 16px);
+  align-items: start;
+}
+.bstudio__main,
+.bstudio__side { display: flex; flex-direction: column; gap: calc(var(--space-scale, 1) * 16px); min-width: 0; }
+.bstudio__pick { display: flex; flex-direction: column; gap: calc(var(--space-scale, 1) * 10px); }
+.bstudio__search { position: relative; display: flex; align-items: center; }
+.bstudio__search > svg {
+  position: absolute;
+  left: 11px;
+  width: 15px;
+  height: 15px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+.bstudio__search .input { width: 100%; padding-left: calc(var(--space-scale, 1) * 33px); }
+.pick-list {
+  max-height: 460px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-scale, 1) * 10px);
+  padding: calc(var(--space-scale, 1) * 8px) calc(var(--space-scale, 1) * 11px);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--speed);
+}
+.pick-row:last-child { border-bottom: 0; }
+.pick-row:hover { background: var(--surface-2); }
+.pick-row.is-checked { background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.pick-row__check { display: grid; place-items: center; }
+.pick-row__check input { width: 16px; height: 16px; accent-color: var(--primary); cursor: pointer; }
+.pick-row__text { flex: 1; min-width: 0; }
+.pick-row__name { font-weight: 620; font-size: calc(var(--type-scale, 1) * 13px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-row__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--space-scale, 1) * 4px) calc(var(--space-scale, 1) * 10px);
+  margin-top: 2px;
+  font-size: calc(var(--type-scale, 1) * 11.4px);
+  color: var(--text-3);
+}
+.pick-row__missing { color: var(--warning); font-weight: 600; }
+.bstudio__labels { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: calc(var(--space-scale, 1) * 10px); }
+.label-preview {
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: calc(var(--space-scale, 1) * 8px);
+  background: #fff;
+  color: #111;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.label-preview__name {
+  font-size: calc(var(--type-scale, 1) * 11px);
+  font-weight: 700;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.label-preview__svg svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.label-preview__foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: calc(var(--type-scale, 1) * 10.4px);
+  color: #444;
+}
+@media (max-width: 1100px) {
+  .bstudio__body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A scan flashes the cart so the cashier sees the line land. */
+.pos__right.is-scanned { animation: cartScan 620ms ease; }
+@keyframes cartScan {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent); }
+  35% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 38%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 0%, transparent); }
+}
+
+/* ---------- offline outbox pill ------------------------------------------- */
+.outbox-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--space-scale, 1) * 18px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 160%);
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space-scale, 1) * 11px);
+  padding: calc(var(--space-scale, 1) * 9px) calc(var(--space-scale, 1) * 12px);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 44px -22px rgba(16, 20, 34, .55);
+  backdrop-filter: blur(14px);
+  z-index: 70;
+  opacity: 0;
+  pointer-events: none;
+  max-width: min(560px, calc(100vw - 24px));
+  transition: transform 260ms cubic-bezier(.2, .8, .3, 1), opacity 200ms ease;
+}
+[data-shell="phone"] .outbox-bar { bottom: calc(var(--space-scale, 1) * 74px + env(safe-area-inset-bottom)); }
+.outbox-bar.is-on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.outbox-bar__icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--primary) 13%, transparent);
+  color: var(--primary);
+  flex: none;
+}
+.outbox-bar__icon svg { width: 16px; height: 16px; }
+.outbox-bar__text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.outbox-bar__text strong { font-size: calc(var(--type-scale, 1) * 12.6px); font-weight: 650; }
+.outbox-bar__text span { font-size: calc(var(--type-scale, 1) * 11.4px); color: var(--text-3); }
+.outbox-list { display: flex; flex-direction: column; gap: calc(var(--space-scale, 1) * 6px); }
+.outbox-item {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(var(--space-scale, 1) * 12px);
+  padding: calc(var(--space-scale, 1) * 8px) calc(var(--space-scale, 1) * 10px);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: calc(var(--type-scale, 1) * 12.2px);
+}
+.outbox-item__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outbox-item__time { color: var(--text-3); flex: none; }
+.outbox-item--more { justify-content: center; color: var(--text-3); }
+.outbox-offer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: calc(var(--space-scale, 1) * 10px);
+  padding: calc(var(--space-scale, 1) * 10px) calc(var(--space-scale, 1) * 12px);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: calc(var(--type-scale, 1) * 12.4px);
+}
+
+/* Barcode field with an inline "Make code" action. */
+.field-with-action { display: flex; align-items: center; gap: calc(var(--space-scale, 1) * 8px); }
+.field-with-action .input { flex: 1; min-width: 0; }
+.field-with-action .btn { flex: none; white-space: nowrap; }
