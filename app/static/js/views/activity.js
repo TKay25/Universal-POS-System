@@ -147,14 +147,14 @@ export default async function activityView(ctx) {
               key: "created_at",
               label: "When",
               render: (row) => h("div", {},
-                h("div", { class: "strong", style: { fontSize: "12.6px" } }, dateTime(row.created_at)),
+                h("div", { class: "strong fs", style: { "--fs": "12.6px" } }, dateTime(row.created_at)),
                 h("div", { class: "tiny dim" }, row.ip || "—")),
             },
             {
               key: "actor",
               label: "Who",
               render: (row) => h("div", {},
-                h("div", { style: { fontSize: "12.6px" } }, row.actor),
+                h("div", { class: "fs", style: { "--fs": "12.6px" } }, row.actor),
                 h("div", { class: "tiny dim truncate", style: { maxWidth: "190px" } }, row.actor_email || "")),
             },
             {

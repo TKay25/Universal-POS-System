@@ -578,7 +578,7 @@ export function confirmDialog({ title = "Are you sure?", message, confirmLabel =
       title,
       size: "sm",
       icon: iconName || (danger ? "warn" : "help"),
-      body: h("div", { class: "muted", style: { fontSize: "13.2px", lineHeight: "1.6" } }, message),
+      body: h("div", { class: "muted fs", style: { "--fs": "13.2px", lineHeight: "1.6" } }, message),
       footer: frag(
         button(cancelLabel, { onClick: () => { done(false); instance.close(); } }),
         button(confirmLabel, {

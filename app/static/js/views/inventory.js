@@ -138,7 +138,7 @@ export default async function inventoryView(ctx) {
             action: canManageProducts ? button("Add product", { variant: "primary", icon: "plus", onClick: () => openCreateProduct() }) : null },
         columns: [
           { key: "name", label: "Product", render: (row) => h("div", { class: "flex items-center gap-2" },
-            h("div", { class: "module-card__icon product-icon", style: { fontSize: "15px" } }, productIcon(row.icon)),
+            h("div", { class: "module-card__icon product-icon fs", style: { "--fs": "15px" } }, productIcon(row.icon)),
             h("div", {}, h("div", { class: "strong nowrap" }, row.name),
               h("div", { class: "tiny dim truncate", style: { maxWidth: "170px" } },
                 row.sku || "—",

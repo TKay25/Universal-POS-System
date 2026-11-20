@@ -432,7 +432,7 @@ SECTION_RENDERERS.branding = async (host) => {
     preview.appendChild(h("div", { class: "flex items-center gap-3 wrap" },
       logoPreview,
       h("div", { class: "grow" },
-        h("div", { class: "strong", style: { fontSize: "16px" } }, logoText.value || companyName()),
+        h("div", { class: "strong fs", style: { "--fs": "16px" } }, logoText.value || companyName()),
         h("div", { class: "tiny dim" }, "Live preview of your identity")),
       h("button", { class: "btn btn--sm", type: "button", style: { background: primary, borderColor: primary, color: "#fff" } }, "Primary"),
       h("button", { class: "btn btn--sm", type: "button", style: { background: accent, borderColor: accent, color: "#04232a" } }, "Accent")));

@@ -36,7 +36,7 @@ export async function openSaleDetail(saleId, { onChanged } = {}) {
   function render() {
     clear(body);
     body.appendChild(h("div", { class: "flex items-center gap-2" },
-      h("div", { class: "kpi__value", style: { fontSize: "24px" } }, money(sale.total_cents)),
+      h("div", { class: "kpi__value fs", style: { "--fs": "24px" } }, money(sale.total_cents)),
       statusBadge(sale.status)));
 
     body.appendChild(kvList([

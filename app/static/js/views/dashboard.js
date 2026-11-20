@@ -298,7 +298,7 @@ export default async function dashboardView(ctx) {
 
     addCard(card("Revenue boost", periodLabel, h("div", { class: "col gap-3" },
       h("div", { class: "flex items-end justify-between" },
-        h("div", { class: "kpi__value", style: { fontSize: "22px" } }, money(data.revenue.last_30_cents)),
+        h("div", { class: "kpi__value fs", style: { "--fs": "22px" } }, money(data.revenue.last_30_cents)),
         growth == null
           ? badge("New", "info")
           : badge(`${growth > 0 ? "+" : ""}${growth}%`, growth >= 0 ? "success" : "danger")),

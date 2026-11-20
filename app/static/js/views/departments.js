@@ -133,7 +133,7 @@ export default async function departmentsView(ctx) {
               icon(department.icon || "layers")),
             h("div", { class: "grow" },
               h("div", { class: "flex items-center gap-2" },
-                h("div", { class: "strong", style: { fontSize: "14.5px" } }, department.name),
+                h("div", { class: "strong fs", style: { "--fs": "14.5px" } }, department.name),
                 department.is_active ? badge("Active", "success") : badge("Inactive")),
               h("div", { class: "tiny dim" },
                 `${department.category_count} categories · ${department.product_count} products`)),

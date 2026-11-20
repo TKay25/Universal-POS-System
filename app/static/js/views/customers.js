@@ -218,7 +218,7 @@ export default async function customersView(ctx) {
       body.appendChild(h("div", { class: "flex items-center gap-3" },
         avatar(customer.name, "#5b5bd6", "lg"),
         h("div", { class: "grow" },
-          h("div", { class: "strong", style: { fontSize: "16px" } }, customer.name),
+          h("div", { class: "strong fs", style: { "--fs": "16px" } }, customer.name),
           h("div", { class: "tiny dim" }, [customer.phone, customer.email].filter(Boolean).join(" · ") || "No contact details"))));
 
       body.appendChild(h("div", { class: "grid grid--3" },
@@ -256,8 +256,8 @@ export default async function customersView(ctx) {
 
     function miniKpi(label, value) {
       return h("div", { class: "card card--pad" },
-        h("div", { class: "kpi__label", style: { fontSize: "10px" } }, label),
-        h("div", { class: "strong", style: { fontSize: "16px", marginTop: "4px" } }, value));
+        h("div", { class: "kpi__label fs", style: { "--fs": "10px" } }, label),
+        h("div", { class: "strong fs", style: { "--fs": "16px", marginTop: "4px" } }, value));
     }
 
     function openBalanceModal() {

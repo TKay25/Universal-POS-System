@@ -367,7 +367,7 @@ export default async function laybysView(ctx) {
     function render() {
       clear(body);
       body.appendChild(h("div", { class: "flex items-center gap-2" },
-        h("div", { class: "kpi__value", style: { fontSize: "22px" } }, money(layby.total_cents)),
+        h("div", { class: "kpi__value fs", style: { "--fs": "22px" } }, money(layby.total_cents)),
         statusBadge(layby.status),
         layby.is_overdue ? badge("Overdue", "danger") : null));
 
@@ -413,8 +413,8 @@ export default async function laybysView(ctx) {
 
     function miniKpi(label, value) {
       return h("div", { class: "card card--pad" },
-        h("div", { class: "kpi__label", style: { fontSize: "10px" } }, label),
-        h("div", { class: "strong", style: { fontSize: "15px", marginTop: "4px" } }, value));
+        h("div", { class: "kpi__label fs", style: { "--fs": "10px" } }, label),
+        h("div", { class: "strong fs", style: { "--fs": "15px", marginTop: "4px" } }, value));
     }
 
     const footer = [
