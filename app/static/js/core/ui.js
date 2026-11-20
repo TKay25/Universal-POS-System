@@ -79,6 +79,24 @@ export function textInput({ value = "", placeholder, type = "text", name, id, di
 export function moneyInput({ value, ...rest } = {}) {
   return textInput({ type: "number", step: "0.01", min: "0", value: value ?? "", ...rest });
 }
+
+/* Password box with a show/hide toggle so people can check what they typed. */
+export function passwordField(input) {
+  const toggle = h("button", {
+    class: "auth__reveal",
+    type: "button",
+    title: "Show password",
+    attrs: { "aria-label": "Show password", tabindex: "0" },
+  }, icon("eye"));
+  toggle.addEventListener("click", () => {
+    const hidden = input.type === "password";
+    input.type = hidden ? "text" : "password";
+    toggle.title = hidden ? "Hide password" : "Show password";
+    toggle.replaceChildren(icon(hidden ? "eyeOff" : "eye"));
+    input.focus();
+  });
+  return h("div", { class: "auth__password" }, input, toggle);
+}
 
 export function textarea({ value = "", placeholder, rows = 3, name, id, maxlength, onInput, disabled } = {}) {
   return h("textarea", { class: "textarea", placeholder, rows, name, id, maxlength, onInput, disabled, value });

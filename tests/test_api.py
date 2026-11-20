@@ -134,6 +134,9 @@ def test_restricted_role_cannot_manage_catalog(client, owner):
     assert created.status_code == 201, created.get_json()
 
     cashier_headers = login(client, "till@test.dev", "Password!1")
+    # Everyone invited with a temporary password replaces it before they can work.
+    changed = client.post("/api/auth/password", json={"new_password": "TillOwn!9"}, headers=cashier_headers)
+    assert changed.status_code == 200, changed.get_json()
     forbidden = client.post(
         "/api/products",
         json={"name": "Should fail", "price": "1.00"},

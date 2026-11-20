@@ -93,6 +93,9 @@ export async function api(path, { method = "GET", body, query, signal, raw = fal
       store.set({ session: null });
       window.dispatchEvent(new CustomEvent("pos:signed-out"));
     }
+    if (response.status === 403 && error.code === "password_change_required") {
+      window.dispatchEvent(new CustomEvent("pos:password-required"));
+    }
     if (method === "GET") window.dispatchEvent(new CustomEvent("pos:fetch-settled"));
     throw new ApiError(error.message || `Request failed (${response.status}).`, {
       status: response.status,

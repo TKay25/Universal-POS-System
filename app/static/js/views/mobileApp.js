@@ -15,6 +15,7 @@ import { areaChart } from "../core/charts.js";
 import { busyOverlay, withButtonSpinner } from "../core/loading.js";
 import { installApp, isStandalone } from "../core/pwa.js";
 import { openSaleDetail } from "./saleDetail.js";
+import { openPasswordDialog } from "./password.js";
 
 const PERIODS = [
   { key: "today", label: "Today", days: 0 },
@@ -109,6 +110,7 @@ export default function mobileAppView({ onOpenFullApp, onSignOut, onOpenTill } =
       { label: currentUser()?.full_name || "Account", header: true },
       { label: "Switch theme", icon: "palette", onClick: () => toggleThemePreference().catch((error) => toast(error.message, "error")) },
       { label: "Open the till", icon: "cart", onClick: () => onOpenTill?.() },
+      { label: "Change password", icon: "key", onClick: () => openPasswordDialog() },
       { label: "Full app on this device", icon: "grid", onClick: () => onOpenFullApp?.() },
     ];
     if (isDeveloper() && impersonating()) {

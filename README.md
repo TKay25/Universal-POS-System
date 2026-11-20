@@ -223,10 +223,18 @@ lists them — use this table instead.
   edited later. Emails are unique across the whole platform, so inviting an address that
   already has an account (in this workspace or another) is refused with a clear message
   instead of creating a second login. The API generates a short, unambiguous **temporary password**
-  (`Up-…`) and shows it once with a copy button; the teammate signs in with it and must
-  choose their own password before the workspace opens. *Reset password* re-issues a
-  temporary password the same way, and any password an admin sets is treated as temporary
-  too. The new column is added on boot by `app/schema.py`.
+  (`Up-…`) and shows it once with a copy button. *Reset password* re-issues a temporary
+  password the same way, and any password an admin sets is treated as temporary too. The
+  new column is added on boot by `app/schema.py`.
+- **First sign-in with a temporary password** — the whole shell is replaced by the *Choose
+  your password* screen, on phones and desktops alike, until the teammate picks their own
+  (8+ characters, confirmed twice, never the temporary one). It is enforced on the server:
+  while `users.must_change_password` is set, only `/api/auth/session`,
+  `/api/auth/password` and `/api/auth/logout` answer — every other call returns 403
+  `password_change_required`, and the client reacts to that code by showing the gate. The
+  Team list shows a **Temp password** badge until the change lands. Once set, anyone can
+  change their password again from the account menu (*Change password*, desktop and phone)
+  or the command palette, which asks for the current password.
 - **Custom fields, promotions, payment methods** (Cash, EcoCash, Bank Transfer, Card by
   default), taxes, receipt designer and custom workspaces.
 

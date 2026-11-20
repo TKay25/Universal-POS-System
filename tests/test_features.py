@@ -200,6 +200,8 @@ def test_reports_and_sales_can_be_filtered_by_user(client, owner):
     cashier_id = created.get_json()["item"]["id"]
 
     cashier_headers = login(client, "till2@test.dev", "Password!1")
+    changed = client.post("/api/auth/password", json={"new_password": "TillPass!9"}, headers=cashier_headers)
+    assert changed.status_code == 200, changed.get_json()
     second = checkout(client, cashier_headers, product["id"], method["id"], 24000, qty=2)
     assert second.status_code == 201, second.get_json()
 
@@ -261,12 +263,39 @@ def test_invited_users_get_a_temporary_password_and_must_change_it(client, owner
     session = client.get("/api/auth/session", headers=hire).get_json()
     assert session["user"]["must_change_password"] is True
 
+    # Until they choose their own, only the password routes stay open.
+    blocked = client.get("/api/auth/preferences", headers=hire)
+    assert blocked.status_code == 403, blocked.get_json()
+    assert blocked.get_json()["error"]["code"] == "password_change_required"
+
+    # The temporary password cannot simply be typed in again as the new one.
+    reused = client.post("/api/auth/password", json={"new_password": temporary}, headers=hire)
+    assert reused.status_code == 422, reused.get_json()
+    assert reused.get_json()["error"]["fields"]["new_password"]
+
     # First change needs no current password; later changes do.
     changed = client.post("/api/auth/password", json={"new_password": "MyOwnPass!1"}, headers=hire)
     assert changed.status_code == 200, changed.get_json()
     assert changed.get_json()["item"]["must_change_password"] is False
+    assert client.get("/api/auth/preferences", headers=hire).status_code == 200
     again = client.post("/api/auth/password", json={"new_password": "Another!22"}, headers=hire)
     assert again.status_code == 422, again.get_json()
+    same = client.post(
+        "/api/auth/password",
+        json={"current_password": "MyOwnPass!1", "new_password": "MyOwnPass!1"},
+        headers=hire,
+    )
+    assert same.status_code == 422, same.get_json()
+
+    # The temporary password stops signing in; the chosen one works.
+    stale = client.post(
+        "/api/auth/login",
+        json={"email": "newhire@test.dev", "password": temporary},
+        headers={"X-CSRF-Token": csrf(client)},
+    )
+    assert stale.status_code == 401, stale.get_json()
+    fresh = login(client, "newhire@test.dev", "MyOwnPass!1")
+    assert client.get("/api/auth/session", headers=fresh).get_json()["user"]["must_change_password"] is False
 
     headers = login(client, owner["company"]["email"], owner["company"]["password"])
     reset = client.post(f"/api/company/users/{body['item']['id']}/reset-password", headers=headers)

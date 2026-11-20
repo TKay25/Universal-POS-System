@@ -16,6 +16,14 @@ from app.utils import utcnow
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 CSRF_EXEMPT_PATHS = {"/api/auth/login", "/api/auth/register", "/api/auth/status"}
 
+# A teammate added with a temporary password may only read their session, choose
+# a new password or sign out until they have done so. Everything else is closed.
+PASSWORD_CHANGE_ALLOWED_PATHS = frozenset({
+    "/api/auth/session",
+    "/api/auth/password",
+    "/api/auth/logout",
+})
+
 
 # --------------------------------------------------------------------------- #
 # Errors
@@ -111,6 +119,12 @@ def current_company() -> Company | None:
             company = user.company
     g.current_company = company
     return company
+
+
+def password_change_required() -> bool:
+    """True while the signed-in account still carries a temporary password."""
+    user = current_user()
+    return bool(user is not None and user.must_change_password)
 
 
 def acting_user() -> User:

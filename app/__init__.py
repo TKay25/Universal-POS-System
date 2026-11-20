@@ -61,7 +61,9 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
     init_pwa(app)
 
     # ---- cross cutting ---------------------------------------------------- #
-    from app.security import ApiError, csrf_protect
+    from app.security import (
+        ApiError, PASSWORD_CHANGE_ALLOWED_PATHS, csrf_protect, password_change_required,
+    )
 
     @app.before_request
     def _guard():
@@ -94,6 +96,20 @@ def create_app(config_object: type = Config, **overrides) -> Flask:
                 csrf_protect()
             except ApiError as error:
                 return error.to_response()
+            # A temporary password unlocks nothing until the teammate replaces it.
+            if request.path not in PASSWORD_CHANGE_ALLOWED_PATHS and password_change_required():
+                return (
+                    jsonify(
+                        {
+                            "error": {
+                                "message": "Choose your own password to keep using this account.",
+                                "code": "password_change_required",
+                                "fields": {},
+                            }
+                        }
+                    ),
+                    403,
+                )
 
     @app.errorhandler(ApiError)
     def _api_error(error: ApiError):

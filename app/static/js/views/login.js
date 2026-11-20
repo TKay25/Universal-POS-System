@@ -4,7 +4,7 @@ import { h, clear } from "../core/dom.js";
 import { icon } from "../core/icons.js";
 import { store, applyBranding } from "../core/store.js";
 import { post } from "../core/http.js";
-import { button, field, textInput, select, alertBox, segmented } from "../core/ui.js";
+import { button, field, textInput, select, alertBox, segmented, passwordField } from "../core/ui.js";
 import { installApp, canInstall } from "../core/pwa.js";
 
 const CURRENCIES = [
@@ -26,22 +26,6 @@ function formGrid2(children) {
 }
 
 /* Password input with a show/hide toggle, so people can check what they typed. */
-function passwordField(input) {
-  const toggle = h("button", {
-    class: "auth__reveal",
-    type: "button",
-    title: "Show password",
-    attrs: { "aria-label": "Show password", tabindex: "0" },
-  }, icon("eye"));
-  toggle.addEventListener("click", () => {
-    const hidden = input.type === "password";
-    input.type = hidden ? "text" : "password";
-    toggle.title = hidden ? "Hide password" : "Show password";
-    toggle.replaceChildren(icon(hidden ? "eyeOff" : "eye"));
-    input.focus();
-  });
-  return h("div", { class: "auth__password" }, input, toggle);
-}
 
 export default function loginView({ onAuthed, initialError = "" } = {}) {
   let mode = "signin";

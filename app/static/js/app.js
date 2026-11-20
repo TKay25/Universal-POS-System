@@ -35,6 +35,7 @@ import developerView from "./views/developer.js";
 import workspaceView from "./views/workspace.js";
 import activityView from "./views/activity.js";
 import mobileAppView from "./views/mobileApp.js";
+import passwordGate, { openPasswordDialog } from "./views/password.js";
 
 const views = {
   dashboard: dashboardView,
@@ -474,6 +475,12 @@ function navModel() {
 function renderShell() {
   applyBranding();
   viewportNarrow = narrowViewport();
+  // A teammate added with a temporary password gets the gate instead of a shell,
+  // on phones and desktops alike, until they have chosen their own.
+  if (currentUser()?.must_change_password) {
+    renderFirstRun();
+    return;
+  }
   applySidebarMode(sidebarMode());
   startHeaderClock();
   if (isMobileShell()) {
@@ -536,62 +543,34 @@ function renderShell() {
   if (!window.location.hash.startsWith("#/pos")) {
     setTimeout(prefetchCoreReports, 800);
   }
-  if (currentUser()?.must_change_password) {
-    setTimeout(openFirstRunPassword, 250);
-  }
 }
 
-/* Invited teammates sign in with a temporary password; this is the one screen
-   they cannot skip until they have chosen their own. */
-function openFirstRunPassword() {
-  if (document.querySelector(".modal--first-run")) return;
-  const password = textInput({ type: "password", placeholder: "At least 8 characters", autofocus: true,
-    attrs: { autocomplete: "new-password" } });
-  const confirm = textInput({ type: "password", placeholder: "Type it again",
-    attrs: { autocomplete: "new-password" } });
-  const errorHost = h("div");
-  const submit = button("Save my password", { variant: "primary", icon: "check", block: true });
-  const instance = modal({
-    title: "Choose your password",
-    subtitle: `${currentUser()?.full_name || "Welcome"} - your account started with a temporary password`,
-    size: "sm",
-    dismissible: false,
-    body: h("div", { class: "col gap-3" }, errorHost,
-      alertBox("Pick something only you know. It replaces the temporary password straight away.", "info"),
-      field({ label: "New password", control: password, required: true, hint: "Minimum 8 characters." }),
-      field({ label: "Confirm password", control: confirm, required: true })),
-    footer: [submit],
-  });
-  instance.dialog.classList.add("modal--first-run");
-
-  submit.addEventListener("click", async () => {
-    clear(errorHost);
-    if (password.value.length < 8) {
-      errorHost.appendChild(alertBox("Use at least 8 characters.", "danger"));
-      password.focus();
-      return;
-    }
-    if (password.value !== confirm.value) {
-      errorHost.appendChild(alertBox("The two passwords do not match.", "danger"));
-      confirm.focus();
-      return;
-    }
-    submit.setLoading(true);
-    try {
-      const data = await post("/auth/password", { new_password: password.value });
+/* Invited teammates sign in with a temporary password; this replaces the whole
+   shell (phone or desktop) until they have chosen their own. */
+function renderFirstRun() {
+  tabs.closeAll();
+  destroyMobile();
+  router = null;
+  shellMode = "gate";
+  document.documentElement.dataset.shell = "auth";
+  const root = document.getElementById("root");
+  clear(root);
+  shellEl = passwordGate({
+    user: currentUser(),
+    onDone: () => {
       const session = getSession();
-      store.set({ session: { ...session, user: { ...session.user, must_change_password: false, ...(data.item || {}) } } });
-      if (typeof data.item?.must_change_password === "boolean" && data.item.must_change_password) {
-        throw new Error("The password could not be updated. Try again.");
+      store.set({ session: { ...session, user: { ...session.user, must_change_password: false } } });
+      if (!window.location.hash.startsWith("#/")) {
+        const canSell = currentCompany() && moduleOn("pos") && hasPerm("pos.sell");
+        const target = canSell ? "/pos" : "/dashboard";
+        window.history.replaceState({ path: target }, "", `#${target}`);
       }
-      instance.close();
-      toast("Password saved. You are all set.", "success");
-    } catch (error) {
-      errorHost.appendChild(alertBox(error.message, "danger"));
-      submit.setLoading(false);
-    }
+      renderShell();
+      toast("Password saved. Welcome to Universal POS.", "success");
+    },
+    onSignOut: signOut,
   });
-  setTimeout(() => password.focus(), 60);
+  root.appendChild(shellEl);
 }
 
 function renderSidebar(sidebar) {
@@ -882,7 +861,7 @@ function openUserMenu(anchor) {
   const items = [
     { label: user.full_name, header: true },
     { label: "Your preferences", icon: "sliders", onClick: () => router?.go("/settings/preferences") },
-    { label: "Change password", icon: "key", onClick: openPasswordModal },
+    { label: "Change password", icon: "key", onClick: () => openPasswordDialog() },
     { label: themeActionLabel(), icon: themeIconName(), onClick: () => flipTheme() },
   ];
   if (isDeveloper()) {
@@ -901,40 +880,6 @@ function openUserMenu(anchor) {
   items.push("-");
   items.push({ label: "Sign out", icon: "logout", danger: true, onClick: signOut });
   menu(anchor, items);
-}
-
-function openPasswordModal() {
-  const current = textInput({ type: "password", placeholder: "Current password" });
-  const next = textInput({ type: "password", placeholder: "At least 8 characters" });
-  const errorBox = h("div");
-  const instance = modal({
-    title: "Change your password",
-    size: "sm",
-    body: h("div", { class: "col gap-3" },
-      errorBox,
-      field({ label: "Current password", control: current }),
-      field({ label: "New password", control: next, hint: "Use at least 8 characters." })),
-    footer: [
-      button("Cancel", { onClick: () => instance.close() }),
-      button("Update password", {
-        variant: "primary",
-        onClick: async (e) => {
-          const btn = e.currentTarget;
-          btn.setLoading(true);
-          clear(errorBox);
-          try {
-            await post("/auth/password", { current_password: current.value, new_password: next.value });
-            toast("Password updated.", "success");
-            instance.close();
-          } catch (error) {
-            errorBox.appendChild(alertBox(error.message, "danger"));
-          } finally {
-            btn.setLoading(false);
-          }
-        },
-      }),
-    ],
-  });
 }
 
 async function signOut() {
@@ -990,7 +935,7 @@ function openPalette() {
     { label: "Departments", hint: "Catalog", icon: "layers", run: () => router?.go("/departments") },
     { label: "Lay-bys", hint: "Selling", icon: "wallet", run: () => router?.go("/laybys") },
     { label: "Open reports", hint: "Action", icon: "chart", run: () => router?.go("/reports") },
-    { label: "Change password", hint: "Account", icon: "key", run: openPasswordModal },
+    { label: "Change password", hint: "Account", icon: "key", run: () => openPasswordDialog() },
     { label: "Sign out", hint: "Account", icon: "logout", run: signOut },
   );
 
@@ -1115,6 +1060,18 @@ window.addEventListener("pos:signed-out", () => {
   renderAuth("Your session expired. Please sign in again.");
 });
 
+/* A terminal switched to a teammate who still has their temporary password (or
+   any stale client) is sent straight to the gate instead of hitting dead ends. */
+window.addEventListener("pos:password-required", () => {
+  const user = currentUser();
+  if (!user) return;
+  if (!user.must_change_password) {
+    const session = getSession();
+    store.set({ session: { ...session, user: { ...user, must_change_password: true } } });
+  }
+  if (shellMode !== "gate") renderShell();
+});
+
 /* Expose a tiny helper for views that need a full refresh after big changes. */
 export function remountShell() {
   if (isAuthed()) renderShell();
@@ -1144,6 +1101,7 @@ window.addEventListener("pos:branch-required", (event) => {
 let corePrefetched = false;
 function prefetchCoreReports() {
   if (corePrefetched || !currentCompany() || !hasPerm("reports.view")) return;
+  if (currentUser()?.must_change_password) return;
   corePrefetched = true;
   const today = isoDay();
   const query = { from: today, to: today, lists: 0, ...branchQuery() };
@@ -1195,6 +1153,11 @@ window.addEventListener("pos:branding-changed", () => {
   const onChange = () => {
     if (!isAuthed()) return;
     const narrow = narrowViewport();
+    if (shellMode === "gate") {
+      // Keep what they typed: the gate is the same layout at every width.
+      viewportNarrow = narrow;
+      return;
+    }
     const wanted = isMobileShell() ? "mobile" : "desktop";
     if (wanted !== shellMode || narrow !== viewportNarrow) renderShell();
   };
