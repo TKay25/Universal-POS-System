@@ -2666,7 +2666,14 @@ textarea.input, .textarea { border-radius: 12px; }
 }
 .auth__install--hero .btn:hover { background: rgba(255, 255, 255, .22); border-color: rgba(255, 255, 255, .48); }
 .auth__install--hero .btn svg { color: #fff; }
-.auth__install--card { display: none; }
+.auth__install--card {
+  margin-top: calc(var(--space-scale, 1) * 14px);
+  padding-top: calc(var(--space-scale, 1) * 12px);
+  border-top: 1px solid var(--hairline);
+}
+.auth__install--card .auth__install-title { font-size: calc(var(--type-scale, 1) * 12px); }
+.auth__install--card .auth__install-hint { font-size: calc(var(--type-scale, 1) * 10.6px); }
+.auth__install--card .btn { flex: none; }
 
 /* Phones: the card owns the screen, so tighten it and keep the install entry
    inside it (the hero is hidden below 900px). */

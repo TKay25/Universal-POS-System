@@ -205,16 +205,17 @@ export default function loginView({ onAuthed, initialError = "" } = {}) {
         tabsHost,
         errorHost,
         formHost,
-        canInstall() ? installRow("card") : null)));
+        installRow("card"))));
 }
 
 /* Always on screen: the label reflects what the browser can do right now, so the
    install entry never disappears or goes stale while the prompt is pending. */
 function installRow(variant) {
+  const quiet = variant === "card";
   const hint = h("div", { class: "auth__install-hint" });
   const label = h("span", {}, "Install");
   const action = h("button", {
-    class: "btn btn--primary btn--sm",
+    class: `btn btn--sm${quiet ? "" : " btn--primary"}`,
     type: "button",
     onClick: () => installApp(),
   }, icon("download"), label);
@@ -230,7 +231,9 @@ function installRow(variant) {
     label.textContent = "Install";
     hint.textContent = canInstall()
       ? "Opens full screen with its own icon — offline shell included."
-      : "One click as soon as your browser hands over its install prompt.";
+      : (quiet
+        ? "Add it to your desktop for one-tap access."
+        : "Add the till to your desktop — no address bar, no tabs.");
   };
   window.addEventListener("pos:install-available", sync);
   window.addEventListener("pos:installed", sync);
